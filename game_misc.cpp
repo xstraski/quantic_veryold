@@ -1,7 +1,8 @@
 #include "game_misc.h"
 
 char **
-TokenizeString(const char *String, u32 *NumTokens, const char *Delims) {
+TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const char *Delims) {
+	Assert(Stack);
 	Assert(String);
 	Assert(NumTokens);
 	Assert(Delims);
@@ -31,7 +32,19 @@ TokenizeString(const char *String, u32 *NumTokens, const char *Delims) {
 		return 0;
 
 	// NOTE(ivan): Allocate needed space.
-	char **Result = (char **)0;
+	char **Result = (char **)AllocFromStack(Stack, sizeof(char *) * (*NumTokens));
+	if (Result) {
+		// NOTE(ivan): Iterate all over again to capture tokens.
+		u32 It = 0;
+		const char *Last = Ptr = String;
+
+		WasDelim = true;
+		while (true) {
+			if (strchr(Delims, *Ptr) || *Ptr == 0) {
+				if (!WasDelim) {
+					u32 Diff = (u32)(Ptr - Last);
+		}
+	}
 
 	return Result;
 }

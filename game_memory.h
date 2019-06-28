@@ -82,8 +82,8 @@ struct memory_pool {
 };
 
 // NOTE(ivan): CreateMemoryPool() returns percentage of left free space of game primary storage.
-// It might be smaller/larger that the caller expects, because memory pool allocates more/less space
-// if a given SizePercentage converted to a wanted size of bytes is too small/large for all blocks
+// It might be larger that the caller expects, because memory pool allocates more space
+// if a given SizePercentage converted to a wanted size of bytes is too small for all blocks
 // with a given BlockSize.
 u32 CreateMemoryPool(memory_pool *Pool, const char *Name, u32 BlockSize, u32 SizePercentage);
 void ResetMemoryPool(memory_pool *Pool);
