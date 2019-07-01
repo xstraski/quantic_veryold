@@ -33,12 +33,12 @@ CreateMemoryStack(memory_stack *Stack, const char *Name, u32 SizePercentage) {
 		
 		Stack->Piece.Size = Size;
 		Stack->Mark = 0;
-
-		Result = SizeToPercentage(GameState.GameMemory->FreeStorage.Size,
-								  GameState.GameMemory->StorageTotalSize);
 	} else {
 		GameState.PlatformAPI->Crashf("CreateMemoryStack[%s]: Out of memory!", Name);
 	}
+
+	Result = SizeToPercentage(GameState.GameMemory->FreeStorage.Size,
+							  GameState.GameMemory->StorageTotalSize);
 
 	LeaveTicketMutex(&Stack->Mutex);
 
@@ -154,6 +154,9 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePe
 	} else {
 		GameState.PlatformAPI->Crashf("CreateMemoryPool[%s]: Out of memory!", Name);
 	}
+
+	Result = SizeToPercentage(GameState.GameMemory->FreeStorage.Size,
+							  GameState.GameMemory->StorageTotalSize);
 
 	LeaveTicketMutex(&Pool->Mutex);
 

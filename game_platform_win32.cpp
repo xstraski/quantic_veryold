@@ -798,18 +798,32 @@ Win32LoadSteamworksModule(void) {
 			= (steam_api_is_steam_running *)GetProcAddress(Result.SteamLibrary, "SteamAPI_IsSteamRunning");
 		Result.SteamworksAPI.RestartAppIfNecessary
 			= (steam_api_restart_app_if_necessary *)GetProcAddress(Result.SteamLibrary, "SteamAPI_RestartAppIfNecessary");
-
+		Result.SteamworksAPI.GetHSteamUser
+			= (steam_api_get_hsteam_user *)GetProcAddress(Result.SteamLibrary, "SteamAPI_GetHSteamUser");
+		Result.SteamworksAPI.GameServerGetHSteamUser
+			= (steam_game_server_get_hsteam_user *)GetProcAddress(Result.SteamLibrary, "SteamGameServer_GetHSteamUser");
+		
 		Result.SteamworksAPI._ContextInit
 			= (steam_internal_context_init *)GetProcAddress(Result.SteamLibrary, "SteamInternal_ContextInit");
 		Result.SteamworksAPI._CreateInterface
 			= (steam_internal_create_interface *)GetProcAddress(Result.SteamLibrary, "SteamInternal_CreateInterface");
+		Result.SteamworksAPI._FindOrCreateUserInterface
+			= (steam_internal_find_or_create_user_interface *)GetProcAddress(Result.SteamLibrary,
+																			 "SteamInternal_FindOrCreateUserInterface");
+		Result.SteamworksAPI._FindOrCreateGameServerInterface
+			= (steam_internal_find_or_create_game_server_interface *)GetProcAddress(Result.SteamLibrary,
+																					"SteamInternal_FindOrCreateGameServerInterface");
 
 		if (Result.SteamworksAPI.Init &&
 			Result.SteamworksAPI.Shutdown &&
 			Result.SteamworksAPI.IsSteamRunning &&
 			Result.SteamworksAPI.RestartAppIfNecessary &&
+			Result.SteamworksAPI.GetHSteamUser &&
+			Result.SteamworksAPI.GameServerGetHSteamUser &&
 			Result.SteamworksAPI._ContextInit &&
-			Result.SteamworksAPI._CreateInterface) {
+			Result.SteamworksAPI._CreateInterface &&
+			Result.SteamworksAPI._FindOrCreateUserInterface &&
+			Result.SteamworksAPI._FindOrCreateGameServerInterface) {
 			Result.IsValid = true;
 			Win32Outf("...success.");
 		} else {

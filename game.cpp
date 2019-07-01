@@ -174,7 +174,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		// NOTE(ivan): Initialize Steamworks.
 		GameState.PlatformAPI->Outf("Initializing Steamworks...");
 		if (GameState.SteamworksAPI->Init()) {
-			GainAccessToSteamworksInterfaces(GameState.SteamworksAPI);
+			GainAccessToSteamworksInterfaces();
 			
 			// NOTE(ivan): If Steam is not running or the game wasn't started through Steam,
 			// SteamworksAPI->RestartAppIfNecessary() starts the local Steam client and also launches the game again.
