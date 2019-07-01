@@ -12,18 +12,25 @@ struct input_button_state {
 	b32 IsNew; // NOTE(ivan): True if the state has been set in THIS frame. On next frame this will be false.
 };
 
+// NOTE(ivan): Returns new only if the button was pressed at exactly current frame, not earlier.
 inline b32
 IsNewlyPressed(input_button_state *Button) {
 	Assert(Button);
 	return !Button->WasDown && Button->IsDown && Button->IsNew;
 }
 
-// NOTE(ivan): Generic controller DPad state.
+// NOTE(ivan): Generic controller DPAD state.
 struct controller_dpad_state {
 	input_button_state Up;
 	input_button_state Down;
 	input_button_state Left;
 	input_button_state Right;
+};
+
+// NOTE(ivan): Generic controller vibration.
+struct controller_vibration {
+	u16 LeftMotorSpeed;
+	u16 RightMotorSpeed;
 };
 
 // NOTE(ivan): Xbox controllers maximum count.
@@ -41,12 +48,18 @@ enum xbox_controller_battery_type {
 };
 
 // NOTE(ivan): Xbox controller battery charge level.
-enum xbox_controller_battery_level {
-	XboxControllerBatteryLevel_Empty,
-	XboxControllerBatteryLevel_Low,
-	XboxControllerBatteryLevel_Medium,
-	XboxControllerBatteryLevel_Full,
-	XboxControllerBatteryLevel_Unknown
+enum xbox_controller_battery_charge_level {
+	XboxControllerBatteryChargeLevel_Empty,
+	XboxControllerBatteryChargeLevel_Low,
+	XboxControllerBatteryChargeLevel_Medium,
+	XboxControllerBatteryChargeLevel_Full,
+	XboxControllerBatteryChargeLevel_Unknown
+};
+
+// NOTE(ivan): Xbox controller battery state.
+struct xbox_controller_battery_state {
+	xbox_controller_battery_type Type;
+	xbox_controller_battery_charge_level ChargeLevel;
 };
 
 // NOTE(ivan): Xbox controller stick state.
@@ -59,8 +72,7 @@ struct xbox_controller_stick_state {
 struct xbox_controller_state {
 	b32 IsConnected;
 
-	xbox_controller_battery_type BatteryType;
-	xbox_controller_battery_level BatteryLevel;
+	xbox_controller_battery_state Battery;
 	
 	input_button_state Start;
 	input_button_state Back;
@@ -83,8 +95,7 @@ struct xbox_controller_state {
 
 	// NOTE(ivan): Set this to non-zero to vibrate the controller.
 	// NOTE(ivan): After actual vibration these will be zeroed again.
-	u16 DoLeftVibration;
-	u16 DoRightVibration;
+	controller_vibration DoVibration;
 };
 
 // NOTE(ivan): Steam maximum controllers count.
@@ -108,10 +119,12 @@ struct steam_controller_trigger_state {
 
 // NOTE(ivan): Steam controller stick state.
 struct steam_controller_stick_state {
+	// NOTE(ivan): Stick position.
     controller_dpad_state DPad;
-	input_button_state Button;
-	
 	v2 Pos;
+
+	// NOTE(ivan): Stick as a button.
+	input_button_state Button;
 };
 
 // NOTE(ivan): Steam controller state.
@@ -137,12 +150,11 @@ struct steam_controller_state {
 	steam_controller_trigger_state RightTrigger;
 
 	// NOTE(ivan): Left stick, the only one on the controller.
-	steam_controller_stick_state Stick;
+	steam_controller_stick_state LeftStick;
 	
 	// NOTE(ivan): Set this to non-zero to vibrate the controller.
 	// NOTE(ivan): After actual vibration these will be zeroed again.
-	u16 DoLeftVibration;
-	u16 DoRightVibration;
+	controller_vibration DoVibration;
 
 	// NOTE(ivan): This allows to set the LED color of the controller.
 	// NOTE(ivan): The color will remain unchanged by the platform layer.

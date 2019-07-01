@@ -424,22 +424,30 @@ Win32ProcessXInputStickValue(SHORT Value, SHORT DeadZoneThreshold) {
 	return Result;
 }
 
-inline void
-Win32ProcessSteamDigitalButton(input_button_state *Button,
-							   EControllerActionOrigin *IncomingOrigins, u32 NumIncomes,
+inline b32
+Win32ContainsSteamActionOrigin(EControllerActionOrigin *ActionOrigins, u32 NumActionOrigins,
 							   EControllerActionOrigin OriginWeSeek) {
-	Assert(Button);
-	Assert(IncomingOrigins);
-	Assert(NumIncomes);
+	Assert(ActionOrigins);
 
-	b32 IsDown = false;
-	for (u32 Index = 0; Index < NumIncomes; Index++) {
-		if (IncomingOrigins[Index] == OriginWeSeek) {
-			IsDown = true;
+	b32 Result = false;
+	for (u32 Index = 0; Index < NumActionOrigins; Index++) {
+		if (ActionOrigins[Index] == OriginWeSeek) {
+			Result = true;
 			break;
 		}
 	}
 
+	return Result;
+}
+
+inline void
+Win32ProcessSteamDigitalButton(input_button_state *Button,
+							   EControllerActionOrigin *ActionOrigins, u32 NumActionOrigins,
+							   EControllerActionOrigin OriginWeSeek) {
+	Assert(Button);
+	Assert(ActionOrigins);
+
+	b32 IsDown = Win32ContainsSteamActionOrigin(IncomingOrigins, NumIncomes, OriginWeSeek);
 	Win32SetInputButtonState(Button, IsDown);
 }
 
@@ -1101,8 +1109,9 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 									// TODO(ivan): Need to not poll disconnected controllers to avoid
 									// XInput frame rate hit on older libraries.
 									// TODO(ivan): Should we poll this more frequently?
-									const DWORD MaxXboxControllerCount = Min(ArraySize(GameInput.XboxControllers),
-																			 XUSER_MAX_COUNT);
+									const DWORD MaxXboxControllers = XUSER_MAX_COUNT;
+									MaxXboxControllers = Min(MaxXboxControllers,
+															 ArraySize(GameInput.XboxControllers));
 									for (u32 Index = 0; Index < MaxXboxControllerCount; Index++) {
 										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
 										XINPUT_STATE XboxControllerState;
@@ -1115,47 +1124,53 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																				   &XboxControllerBattery) == ERROR_SUCCESS) {
 												switch (XboxControllerBattery.BatteryType) {
 												case BATTERY_TYPE_DISCONNNECTED:
-													XboxController->BatteryType = XboxControllerBatteryType_Disconnected;
+													XboxController->Battery.Type = XboxControllerBatteryType_Disconnected;
 													break;
 
 												case BATTERY_TYPE_WIRED:
-													XboxController->BatteryType = XboxControllerBatteryType_Wired;
+													XboxController->Battery.Type = XboxControllerBatteryType_Wired;
 													break;
 
 												case BATTERY_TYPE_ALKALINE:
-													XboxController->BatteryType = XboxControllerBatteryType_Alkaline;
+													XboxController->Battery.Type = XboxControllerBatteryType_Alkaline;
 													break;
 
 												case BATTERY_TYPE_NIMH:
-													XboxController->BatteryType = XboxControllerBatteryType_Nimh;
+													XboxController->Battery.Type = XboxControllerBatteryType_Nimh;
 													break;
 
 												case BATTERY_TYPE_UNKNOWN:
 												default:
-													XboxController->BatteryType = XboxControllerBatteryType_Unknown;
+													XboxController->Battery.Type = XboxControllerBatteryType_Unknown;
 													break;
 												}
 
 												switch (XboxControllerBattery.BatteryLevel) {
 												case BATTERY_LEVEL_EMPTY:
-													XboxController->BatteryLevel = XboxControllerBatteryLevel_Empty;
+													XboxController->Battery.ChargeLevel
+														= XboxControllerBatteryChargeLevel_Empty;
 													break;
 
 												case BATTERY_LEVEL_LOW:
-													XboxController->BatteryLevel = XboxControllerBatteryLevel_Low;
+													XboxController->Battery.ChargeLevel
+														= XboxControllerBatteryChargeLevel_Low;
 													break;
 
 												case BATTERY_LEVEL_MEDIUM:
-													XboxController->BatteryLevel = XboxControllerBatteryLevel_Medium;
+													XboxController->Battery.ChargeLevel
+														= XboxControllerBatteryChargeLevel_Medium;
 													break;
 
 												case BATTERY_LEVEL_FULL:
-													XboxController->BatteryLevel = XboxControllerBatteryLevel_Full;
+													XboxController->Battery.ChargeLevel
+														= XboxControllerBatteryChargeLevel_Full;
 													break;
 												}
 											} else {
-												XboxController->BatteryType = XboxControllerBatteryType_Unknown;
-												XboxController->BatteryLevel = XboxControllerBatteryLevel_Unknown;
+												XboxController->Battery.Type
+													= XboxControllerBatteryType_Unknown;
+												XboxController->Battery.ChargeLevel
+													= XboxControllerBatteryChargeLevel_Unknown;
 											}
 
 											// NOTE(ivan): Gather buttons and sticks state.
@@ -1184,16 +1199,16 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																			XboxGamepad->wButtons,
 																			XINPUT_GAMEPAD_Y);
 
-											Win32ProcessXInputDigitalButton(&XboxController->DPadUp,
+											Win32ProcessXInputDigitalButton(&XboxController->DPad.Up,
 																			XboxGamepad->wButtons,
 																			XINPUT_GAMEPAD_DPAD_UP);
-											Win32ProcessXInputDigitalButton(&XboxController->DPadDown,
+											Win32ProcessXInputDigitalButton(&XboxController->DPad.Down,
 																			XboxGamepad->wButtons,
 																			XINPUT_GAMEPAD_DPAD_DOWN);
-											Win32ProcessXInputDigitalButton(&XboxController->DPadLeft,
+											Win32ProcessXInputDigitalButton(&XboxController->DPad.Left,
 																			XboxGamepad->wButtons,
 																			XINPUT_GAMEPAD_DPAD_LEFT);
-											Win32ProcessXInputDigitalButton(&XboxController->DPadRight,
+											Win32ProcessXInputDigitalButton(&XboxController->DPad.Right,
 																			XboxGamepad->wButtons,
 																			XINPUT_GAMEPAD_DPAD_RIGHT);
 
@@ -1232,15 +1247,18 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
 
 											// NOTE(ivan): Vibrate if requested.
-											if (XboxController->DoLeftVibration || XboxController->DoRightVibration) {
+											if (XboxController->DoVibration.LeftMotorSpeed ||
+												XboxController->DoVibration.RightMotorSpeed) {
 												XINPUT_VIBRATION XboxControllerVibr;
-												XboxControllerVibr.wLeftMotorSpeed = XboxController->DoLeftVibration;
-												XboxControllerVibr.wRightMotorSpeed = XboxController->DoRightVibration;
+												XboxControllerVibr.wLeftMotorSpeed
+													= XboxController->DoVibration.LeftMotorSpeed;
+												XboxControllerVibr.wRightMotorSpeed
+													= XboxController->DoVibration.RightMotorSpeed;
 
 												XInputModule.SetState(Index, &XboxControllerVibr);
 
-												XboxController->DoLeftVibration = 0;
-												XboxController->DoRightVibration = 0;
+												XboxController->DoVibration.LeftMotorSpeed = 0;
+												XboxController->DoVibration.RightMotorSpeed = 0;
 											}
 										} else {
 											XboxController->IsConnected = false;
@@ -1251,11 +1269,14 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 									// NOTE(ivan): According to isteamcontroller.h comments, ISteamController::RunFrame()
 									// must be called somewhere before ISteamController::GetConnectedControllers().
 									SteamworksAPI.Controller->RunFrame();
-									
-									ControllerHandle_t SteamControllerHandles[STEAM_INPUT_MAX_COUNT];
-									u32 MaxSteamControllersCount
+
+									static u32 MaxSteamControllers = STEAM_INPUT_MAX_COUNT;
+									static ControllerHandle_t SteamControllerHandles[MaxSteamControllers];
+									u32 NumConnectedSteamControllers
 										= SteamworksAPI.Controller->GetConnectedControllers(SteamControllerHandles);
-									for (u32 Index = 0; Index < MaxSteamControllersCount; Index++) {
+									NumConnectedSteamControllers = Min(NumConnectedSteamControllers,
+																	   MaxSteamControllers);
+									for (u32 Index = 0; Index < NumConnectedSteamControllers; Index++) {
 										ControllerHandle_t SteamControllerHandle = SteamControllerHandles[Index];
 										steam_controller_state *SteamController = &GameInput.SteamControllers[Index];
 
@@ -1305,12 +1326,84 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																		   k_EControllerActionOrigin_RightBumper);
 
 											// NOTE(ivan): Process left stick.
-											Win32ProcessSteamDigitalButton(&SteamController->Stick,
+											Win32ProcessSteamDigitalButton(&SteamController->LeftStick.Button,
 																		   SteamControllerOrigins,
 																		   NumSteamControllerOrigins,
 																		   k_EControllerActionOrigin_LeftStick_Click);
 
-											// NOTE(ivan): Process pads.
+											// NOTE(ivan): Process left pad.
+											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Up,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_LeftPad_DPadNorth);
+											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Down,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_LeftPad_DPadSouth);
+											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Left,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_LeftPad_DPadWest);
+											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Right,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_LeftPad_DPadEast);
+
+											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.Button,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_LeftPad_Click);
+
+											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
+																			   NumSteamControllerOrigins,
+																			   k_EControllerActionOrigin_LeftPad_Touch))
+												SteamController->LeftPad.IsTouchHappening = true;
+											else
+												SteamController->LeftPad.IsTouchHappening = false;
+
+											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
+																			   NumSteamControllerOrigins,
+																			   k_EControllerActionOrigin_LeftPad_Swipe))
+												SteamController->LeftPad.IsSwipeHappening = true;
+											else
+												SteamController->LeftPad.IsSwipeHappening = false;
+
+											// NOTE(ivan): Process right pad.
+											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Up,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_RightPad_DPadNorth);
+											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Down,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_RightPad_DPadSouth);
+											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Left,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_RightPad_DPadWest);
+											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Right,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_RightPad_DPadEast);
+
+											Win32ProcessSteamDigitalButton(&SteamController->RightPad.Button,
+																		   SteamControllerOrigins,
+																		   NumSteamControllerOrigins,
+																		   k_EControllerActionOrigin_RightPad_Click);
+
+											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
+																			   NumSteamControllerOrigins,
+																			   k_EControllerActionOrigin_RightPad_Touch))
+												SteamController->RightPad.IsTouchHappening = true;
+											else
+												SteamController->RightPad.IsTouchHappening = false;
+
+											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
+																			   NumSteamControllerOrigins,
+																			   k_EControllerActionOrigin_RightPad_Swipe))
+												SteamController->RightPad.IsSwipeHappening = true;
+											else
+												SteamController->RightPad.IsSwipeHappening = false;
 										}
 
 										// NOTE(ivan): Gather controller analog actions.
@@ -1322,20 +1415,26 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 										}
 										
 										// NOTE(ivan): Set controller LED color.
+										u8 SteamControllerLED_R = (u8)((f32)SteamController->SetLEDColor.R * 255.0f);
+										u8 SteamControllerLED_G = (u8)((f32)SteamController->SetLEDColor.G * 255.0f);
+										u8 SteamControllerLED_B = (u8)((F32)SteamController->SetLEDColor.B * 255.0f);
 										SteamworksAPI.Controller->SetLEDColor(SteamControllerHandle,
-																			  SteamController->SetLEDColor.R,
-																			  SteamController->SetLEDColor.G,
-																			  SteamController->SetLEDColor.B,
+																			  SteamControllerLED_R,
+																			  SteamControllerLED_G,
+																			  SteamControllerLED_B,
 																			  0);
 										
 										// NOTE(ivan): Vibrate controller if requested.
-										if (SteamController->DoLeftVibration || SteamController->DoRightVibration) {
-											SteamworksAPI.Controller->TriggerVibration(SteamControllerHandle,
-																					   SteamController->DoLeftVibration,
-																					   SteamController->DoRightVibration);
+										if (SteamController->DoVibration.LeftMotorSpeed ||
+											SteamController->DoVibration.RightMotorSpeed) {
+											u16 LeftSpeed = SteamController->DoVibration.LeftMotorSpeed;
+											u16 RightSpeed = SteamController->DoVibration.RightMotorSpeed;
 											
-											SteamController->DoLeftVibration = 0;
-											SteamController->DoRightVibration = 0;
+											SteamworksAPI.Controller->TriggerVibration(SteamControllerHandle,
+																					   LeftSpeed, RightSpeed);
+											
+											SteamController->DoVibration.LeftMotorSpeed = 0;
+											SteamController->DoVibration.RightMotorSpeed = 0;
 										}
 									}
 									
@@ -1350,6 +1449,12 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 									// NOTE(ivan): Update game frame.
 									GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0, 0);
+
+									// NOTE(ivan): Before the next frame, make all Steam-Controllers disconnected.
+									// This is needed because unlike with XInputGetState() we are not able to find
+									// out whether a controller with a specified index is connected or not.
+									for (u32 Index = 0; Index < MaxSteamControllers; Index++)
+										GameInput.SteamController[Index].IsConnected = false;
 
 									// NOTE(ivan): Before the next frame, make all input events obsolete.
 									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
