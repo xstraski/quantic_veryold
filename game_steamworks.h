@@ -3,6 +3,8 @@
 
 #include "game_platform.h"
 #include "deps/steamworks/public/steam/steam_api.h"
+#include "deps/steamworks/public/steam/isteamgameserver.h"
+#include "deps/steamworks/public/steam/isteamgameserverstats.h"
 
 // NOTE(ivan): Steamworks API prototypes.
 #define STEAM_API_INIT(Name) bool S_CALLTYPE Name(void)
@@ -61,8 +63,6 @@ struct steamworks_api {
 	ISteamVideo *Video;
 	ISteamParentalSettings *ParentalSettings;
 	ISteamInput *Input;
-	ISteamContentServer *ContentServer;
-	ISteamPS3OverlayRender *PS3OverlayRender;
 	ISteamParties *Parties;
 };
 

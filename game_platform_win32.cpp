@@ -70,9 +70,6 @@
 #include <xinput.h>
 
 // NOTE(ivan): Win32 XInput prototypes.
-#define X_INPUT_GET_BATTERY_INFORMATION(Name) DWORD WINAPI Name(DWORD UserIndex, BYTE DevType, XINPUT_BATTERY_INFORMATION *BatteryInformation)
-typedef X_INPUT_GET_BATTERY_INFORMATION(x_input_get_battery_information);
-
 #define X_INPUT_GET_STATE(Name) DWORD WINAPI Name(DWORD UserIndex, XINPUT_STATE *State)
 typedef X_INPUT_GET_STATE(x_input_get_state);
 
@@ -84,7 +81,6 @@ struct win32_xinput_module {
 	b32 IsValid; // NOTE(ivan): False if something went wrong and the XInput module is not loaded.
 	HMODULE XInputLibrary;
 
-	x_input_get_battery_information *GetBatteryInformation;
 	x_input_get_state *GetState;
 	x_input_set_state *SetState;
 };
@@ -187,11 +183,80 @@ static PLATFORM_CHECK_PARAM_VALUE(Win32CheckParamValue) {
 
 static PLATFORM_OUTF(Win32Outf) {
 	Assert(Format);
+
+	char Buffer[2048] = {};
+	CollectArgsN(Buffer, ArraySize(Buffer) - 1, Format);
+
+	// NOTE(ivan): Out to debugger's output window if any.
+	if (Win32State.IsDebuggerActive) {
+		OutputDebugStringA("## ");
+		OutputDebugStringA(Buffer);
+		OutputDebugStringA("\r\n");
+	}
 }
 
-static PLATFORM_CRASHF(Win32Outf) {
+static PLATFORM_CRASHF(Win32Crashf) {
 	Assert(Format);
+
+	static b32 AlreadyCrashed = false;
+	if (!AlreadyCrashed) {
+		AlreadyCrashed = true;
+		
+		char Buffer[2048] = {};
+		CollectArgsN(Buffer, ArraySize(Buffer) - 1, Format);
+		
+		MessageBoxA(0, Buffer, GAMENAME, MB_OK | MB_ICONERROR | MB_TOPMOST);
+	}
+	
 	ExitProcess(0);
+}
+
+static PLATFORM_FOPEN(Win32FOpen) {
+	Assert(FileName);
+	UnusedParam(AccessType);
+
+	file_handle Result = NOTFOUND;
+
+	return Result;
+}
+
+static PLATFORM_FCLOSE(Win32FClose) {
+	UnusedParam(FileHandle);
+}
+
+static PLATFORM_FREAD(Win32FRead) {
+	UnusedParam(FileHandle);
+	Assert(Buffer);
+	Assert(Size);
+
+	u32 Result = 0;
+
+	return Result;
+}
+
+static PLATFORM_FWRITE(Win32FWrite) {
+	UnusedParam(FileHandle);
+	Assert(Buffer);
+	Assert(Size);
+
+	u32 Result = 0;
+
+	return Result;
+}
+
+static PLATFORM_FSEEK(Win32FSeek) {
+	UnusedParam(FileHandle);
+	UnusedParam(Size);
+	UnusedParam(SeekOrigin);
+	UnusedParam(Pos);
+
+	b32 Result = false;
+
+	return Result;
+}
+
+static PLATFORM_FFLUSH(Win32FFlush) {
+	UnusedParam(FileHandle);
 }
 
 static cpu_info
@@ -332,14 +397,6 @@ Win32GatherCPUInfo(void) {
 	return CPUInfo;
 }
 
-static X_INPUT_GET_BATTERY_INFORMATION(Win32XInputGetBatteryInformationStub) {
-	UnusedParam(UserIndex);
-	UnusedParam(DevType);
-	UnusedParam(BatteryInformation);
-	
-	return ERROR_DEVICE_NOT_CONNECTED;
-}
-
 static X_INPUT_GET_STATE(Win32XInputGetStateStub) {
 	UnusedParam(UserIndex);
 	UnusedParam(State);
@@ -371,12 +428,10 @@ Win32LoadXInputModule(void) {
 		Result.XInputLibrary = LoadLibraryA("xinput1_3.dll");
 	}
 	if (Result.XInputLibrary) {
-		Result.GetBatteryInformation
-			= (x_input_get_battery_information *)GetProcAddress(Result.XInputLibrary, "XInputGetBatteryInformation");
 		Result.GetState = (x_input_get_state *)GetProcAddress(Result.XInputLibrary, "XInputGetState");
 		Result.SetState = (x_input_set_state *)GetProcAddress(Result.XInputLibrary, "XInputSetState");
 
-		if (Result.GetBatteryInformation && Result.GetState && Result.SetState) {
+		if (Result.GetState && Result.SetState) {
 			Result.IsValid = true;
 			Win32Outf("...success.");
 		}
@@ -387,7 +442,6 @@ Win32LoadXInputModule(void) {
 	if (!Result.IsValid) {
 		Win32Outf("...fail, entries not found, using stubs!");
 		
-		Result.GetBatteryInformation = Win32XInputGetBatteryInformationStub;
 		Result.GetState = Win32XInputGetStateStub;
 		Result.SetState = Win32XInputSetStateStub;
 	}
@@ -447,7 +501,7 @@ Win32ProcessSteamDigitalButton(input_button_state *Button,
 	Assert(Button);
 	Assert(ActionOrigins);
 
-	b32 IsDown = Win32ContainsSteamActionOrigin(IncomingOrigins, NumIncomes, OriginWeSeek);
+	b32 IsDown = Win32ContainsSteamActionOrigin(ActionOrigins, NumActionOrigins, OriginWeSeek);
 	Win32SetInputButtonState(Button, IsDown);
 }
 
@@ -736,7 +790,7 @@ Win32LoadSteamworksModule(void) {
 		SteamLibraryName = "steam_api64.dll";
 
 	Win32Outf("Loading Steamworks module %s...", SteamLibraryName);
-	Result.SteamLibrary = LoadLibraryA(SteamLibraryFileName);
+	Result.SteamLibrary = LoadLibraryA(SteamLibraryName);
 	if (Result.SteamLibrary) {
 		Result.SteamworksAPI.Init = (steam_api_init *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Init");
 		Result.SteamworksAPI.Shutdown = (steam_api_shutdown *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Shutdown");
@@ -771,8 +825,9 @@ Win32LoadSteamworksModule(void) {
 static uptr
 Win32CalculateDesirableUsableMemorySize(void) {
 	uptr Result;
-	
-	MEMORYSTATUSEX MemStat; // NOTE(ivan): Detect how much memory is available.
+
+	// NOTE(ivan): Detect how much memory is available.
+	MEMORYSTATUSEX MemStat;
 	MemStat.dwLength = sizeof(MemStat);
 	if (GlobalMemoryStatusEx(&MemStat)) {
 		// NOTE(ivan): Capture 80% of free RAM space and leave the rest for internal platform-layer and OS needs.
@@ -789,9 +844,8 @@ Win32CalculateDesirableUsableMemorySize(void) {
 
 			// TODO(ivan): 64-bit Windows allows 32-bit programs to eat 3 gigabytes of RAM
 			// instead of 2 gigabytes as in 32-bit Windows.
-			if (Is64BitWindows)
-				Result = Gigabytes(3); // NOTE(ivan): Requesting 3Gb of memory for 32-bit program
-			// requires it being built with /largeaddressaware MS linker option.
+			if (Is64BitWindows)        // NOTE(ivan): Requesting 3Gb of memory for 32-bit program
+				Result = Gigabytes(3); // requires it being built with /largeaddressaware MS linker option.
 			else
 				Result = Gigabytes(2);
 		} else if (IsTargetCPU64Bit()) {
@@ -1003,7 +1057,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 		// NOTE(ivan): Obtain game "shared name".
 		char SharedName[1024] = {};
-		strncpy(SharedName, ExecName + 3, ArraySize(SharedName) - 1);
+		strncpy(SharedName, ExecNameNoExt + 3, ArraySize(SharedName) - 1);
 
 		Win32API.SharedName = SharedName;
 
@@ -1016,7 +1070,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 		GameMemory.FreeStorage.Size = Win32CalculateDesirableUsableMemorySize();
 		GameMemory.FreeStorage.Base = (u8 *)VirtualAlloc(0, GameMemory.FreeStorage.Size, MEM_COMMIT, PAGE_READWRITE);
 		if (GameMemory.FreeStorage.Base) {
-			GameMemory.StorageTotalSize = GameMemorySize;
+			GameMemory.StorageTotalSize = GameMemory.FreeStorage.Size;
 
 			// NOTE(ivan): Create main window.
 			WNDCLASSA WindowClass = {};
@@ -1061,7 +1115,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 					RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
 
-					// NOTE(ivan): Connect to XInput for processing xbox controller(s) input.
+					// NOTE(ivan): Connect to XInput for processing Xbox controller(s) input.
 					win32_xinput_module XInputModule = Win32LoadXInputModule();
 
 					// NOTE(ivan): Connect to Steamworks.
@@ -1109,71 +1163,15 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 									// TODO(ivan): Need to not poll disconnected controllers to avoid
 									// XInput frame rate hit on older libraries.
 									// TODO(ivan): Should we poll this more frequently?
-									const DWORD MaxXboxControllers = XUSER_MAX_COUNT;
+									DWORD MaxXboxControllers = XUSER_MAX_COUNT;
 									MaxXboxControllers = Min(MaxXboxControllers,
 															 ArraySize(GameInput.XboxControllers));
-									for (u32 Index = 0; Index < MaxXboxControllerCount; Index++) {
+									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
 										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
 										XINPUT_STATE XboxControllerState;
 										if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
 											XboxController->IsConnected = true;
 
-											// NOTE(ivan): Gather battery state.
-											XINPUT_BATTERY_INFORMATION XboxControllerBattery;
-											if (XInputModule.GetBatteryInformation(Index, BATTERY_DEVTYPE_GAMEPAD,
-																				   &XboxControllerBattery) == ERROR_SUCCESS) {
-												switch (XboxControllerBattery.BatteryType) {
-												case BATTERY_TYPE_DISCONNNECTED:
-													XboxController->Battery.Type = XboxControllerBatteryType_Disconnected;
-													break;
-
-												case BATTERY_TYPE_WIRED:
-													XboxController->Battery.Type = XboxControllerBatteryType_Wired;
-													break;
-
-												case BATTERY_TYPE_ALKALINE:
-													XboxController->Battery.Type = XboxControllerBatteryType_Alkaline;
-													break;
-
-												case BATTERY_TYPE_NIMH:
-													XboxController->Battery.Type = XboxControllerBatteryType_Nimh;
-													break;
-
-												case BATTERY_TYPE_UNKNOWN:
-												default:
-													XboxController->Battery.Type = XboxControllerBatteryType_Unknown;
-													break;
-												}
-
-												switch (XboxControllerBattery.BatteryLevel) {
-												case BATTERY_LEVEL_EMPTY:
-													XboxController->Battery.ChargeLevel
-														= XboxControllerBatteryChargeLevel_Empty;
-													break;
-
-												case BATTERY_LEVEL_LOW:
-													XboxController->Battery.ChargeLevel
-														= XboxControllerBatteryChargeLevel_Low;
-													break;
-
-												case BATTERY_LEVEL_MEDIUM:
-													XboxController->Battery.ChargeLevel
-														= XboxControllerBatteryChargeLevel_Medium;
-													break;
-
-												case BATTERY_LEVEL_FULL:
-													XboxController->Battery.ChargeLevel
-														= XboxControllerBatteryChargeLevel_Full;
-													break;
-												}
-											} else {
-												XboxController->Battery.Type
-													= XboxControllerBatteryType_Unknown;
-												XboxController->Battery.ChargeLevel
-													= XboxControllerBatteryChargeLevel_Unknown;
-											}
-
-											// NOTE(ivan): Gather buttons and sticks state.
 											// TODO(ivan): See if XboxControllerState.dwPacketNumber
 											// increments too rapidly.
 											XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
@@ -1270,7 +1268,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 									// must be called somewhere before ISteamController::GetConnectedControllers().
 									SteamworksAPI.Controller->RunFrame();
 
-									static u32 MaxSteamControllers = STEAM_INPUT_MAX_COUNT;
+									static const u32 MaxSteamControllers = STEAM_INPUT_MAX_COUNT;
 									static ControllerHandle_t SteamControllerHandles[MaxSteamControllers];
 									u32 NumConnectedSteamControllers
 										= SteamworksAPI.Controller->GetConnectedControllers(SteamControllerHandles);
@@ -1287,7 +1285,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 										int NumSteamControllerOrigins
 											= SteamworksAPI.Controller->GetDigitalActionOrigins(SteamControllerHandle,
 																								0, 0,
-																								&SteamControllerOrigins);
+																								SteamControllerOrigins);
 										if (NumSteamControllerOrigins) {
 											// NOTE(ivan): Process general buttons.
 											Win32ProcessSteamDigitalButton(&SteamController->Start,
@@ -1316,7 +1314,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																		   NumSteamControllerOrigins,
 																		   k_EControllerActionOrigin_Y);
 
-											Win32ProcessSteamDigitalButton(&SteamConntroller->LeftBumper,
+											Win32ProcessSteamDigitalButton(&SteamController->LeftBumper,
 																		   SteamControllerOrigins,
 																		   NumSteamControllerOrigins,
 																		   k_EControllerActionOrigin_LeftBumper);
@@ -1357,16 +1355,16 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
 																			   NumSteamControllerOrigins,
 																			   k_EControllerActionOrigin_LeftPad_Touch))
-												SteamController->LeftPad.IsTouchHappening = true;
+												SteamController->LeftPad.IsTouchHappened = true;
 											else
-												SteamController->LeftPad.IsTouchHappening = false;
+												SteamController->LeftPad.IsTouchHappened = false;
 
 											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
 																			   NumSteamControllerOrigins,
 																			   k_EControllerActionOrigin_LeftPad_Swipe))
-												SteamController->LeftPad.IsSwipeHappening = true;
+												SteamController->LeftPad.IsSwipeHappened = true;
 											else
-												SteamController->LeftPad.IsSwipeHappening = false;
+												SteamController->LeftPad.IsSwipeHappened = false;
 
 											// NOTE(ivan): Process right pad.
 											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Up,
@@ -1394,30 +1392,31 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
 																			   NumSteamControllerOrigins,
 																			   k_EControllerActionOrigin_RightPad_Touch))
-												SteamController->RightPad.IsTouchHappening = true;
+												SteamController->RightPad.IsTouchHappened = true;
 											else
-												SteamController->RightPad.IsTouchHappening = false;
+												SteamController->RightPad.IsTouchHappened = false;
 
 											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
 																			   NumSteamControllerOrigins,
 																			   k_EControllerActionOrigin_RightPad_Swipe))
-												SteamController->RightPad.IsSwipeHappening = true;
+												SteamController->RightPad.IsSwipeHappened = true;
 											else
-												SteamController->RightPad.IsSwipeHappening = false;
+												SteamController->RightPad.IsSwipeHappened = false;
 										}
 
 										// NOTE(ivan): Gather controller analog actions.
 										NumSteamControllerOrigins
 											= SteamworksAPI.Controller->GetAnalogActionOrigins(SteamControllerHandle,
 																							   0, 0,
-																							   &SteamControllerOrigins);
+																							   SteamControllerOrigins);
 										if (NumSteamControllerOrigins) {
+											
 										}
 										
 										// NOTE(ivan): Set controller LED color.
 										u8 SteamControllerLED_R = (u8)((f32)SteamController->SetLEDColor.R * 255.0f);
 										u8 SteamControllerLED_G = (u8)((f32)SteamController->SetLEDColor.G * 255.0f);
-										u8 SteamControllerLED_B = (u8)((F32)SteamController->SetLEDColor.B * 255.0f);
+										u8 SteamControllerLED_B = (u8)((f32)SteamController->SetLEDColor.B * 255.0f);
 										SteamworksAPI.Controller->SetLEDColor(SteamControllerHandle,
 																			  SteamControllerLED_R,
 																			  SteamControllerLED_G,
@@ -1454,7 +1453,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 									// This is needed because unlike with XInputGetState() we are not able to find
 									// out whether a controller with a specified index is connected or not.
 									for (u32 Index = 0; Index < MaxSteamControllers; Index++)
-										GameInput.SteamController[Index].IsConnected = false;
+										GameInput.SteamControllers[Index].IsConnected = false;
 
 									// NOTE(ivan): Before the next frame, make all input events obsolete.
 									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
@@ -1474,16 +1473,16 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 										XboxController->X.IsNew = false;
 										XboxController->Y.IsNew = false;
 
-										XboxController->DPadUp.IsNew = false;
-										XboxController->DPadDown.IsNew = false;
-										XboxController->DPadLeft.IsNew = false;
-										XboxController->DPadRight.IsNew = false;
+										XboxController->DPad.Up.IsNew = false;
+										XboxController->DPad.Down.IsNew = false;
+										XboxController->DPad.Left.IsNew = false;
+										XboxController->DPad.Right.IsNew = false;
 
 										XboxController->LeftBumper.IsNew = false;
 										XboxController->RightBumper.IsNew = false;
 
-										XboxController->LeftStick.IsNew = false;
-										XboxController->RightStick.IsNew = false;
+										XboxController->LeftStick.Button.IsNew = false;
+										XboxController->RightStick.Button.IsNew = false;
 									}
 
 									for (u32 Index = 0; Index < MaxSteamControllers; Index++) {
@@ -1501,18 +1500,18 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 										SteamController->LeftPad.DPad.Down.IsNew = false;
 										SteamController->LeftPad.DPad.Left.IsNew = false;
 										SteamController->LeftPad.DPad.Right.IsNew = false;
-										SteamController->LeftPad.Click.IsNew = false;
+										SteamController->LeftPad.Button.IsNew = false;
 
 										SteamController->RightPad.DPad.Up.IsNew = false;
 										SteamController->RightPad.DPad.Down.IsNew = false;
 										SteamController->RightPad.DPad.Left.IsNew = false;
 										SteamController->RightPad.DPad.Right.IsNew = false;
-										SteamController->RightPad.Click.IsNew = false;
+										SteamController->RightPad.Button.IsNew = false;
 
 										SteamController->LeftBumper.IsNew = false;
 										SteamController->RightBumper.IsNew = false;
 
-										SteamController->Stick.IsNew = false;
+										SteamController->LeftStick.Button.IsNew = false;
 									}
 
 									// NOTE(ivan): Escape primary loop if quit has been requested.
@@ -1560,7 +1559,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 							FreeLibrary(GameModule.GameLibrary);
 						} else {
 							// NOTE(ivan): Game module cannot be loaded.
-							Win32Crashf(GAMENAME "cannot load game DLL!");
+							Win32Crashf(GAMENAME " cannot load game DLL!");
 						}
 
 						FreeLibrary(SteamworksModule.SteamLibrary);

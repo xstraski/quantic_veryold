@@ -38,30 +38,6 @@ struct controller_vibration {
 // which is Win32-specific header and must not be used globally, so the maximum count is defined here like that.
 #define MAX_XBOX_CONTROLLERS_COUNT 4 // NOTE(ivan): XUSER_MAX_COUNT.
 
-// NOTE(ivan): Xbox controller battery type.
-enum xbox_controller_battery_type {
-	XboxControllerBatteryType_Disconnected,
-	XboxControllerBatteryType_Wired,
-	XboxControllerBatteryType_Alkaline,
-	XboxControllerBatteryType_Nimh,
-	XboxControllerBatteryType_Unknown
-};
-
-// NOTE(ivan): Xbox controller battery charge level.
-enum xbox_controller_battery_charge_level {
-	XboxControllerBatteryChargeLevel_Empty,
-	XboxControllerBatteryChargeLevel_Low,
-	XboxControllerBatteryChargeLevel_Medium,
-	XboxControllerBatteryChargeLevel_Full,
-	XboxControllerBatteryChargeLevel_Unknown
-};
-
-// NOTE(ivan): Xbox controller battery state.
-struct xbox_controller_battery_state {
-	xbox_controller_battery_type Type;
-	xbox_controller_battery_charge_level ChargeLevel;
-};
-
 // NOTE(ivan): Xbox controller stick state.
 struct xbox_controller_stick_state {
 	input_button_state Button;
@@ -71,8 +47,6 @@ struct xbox_controller_stick_state {
 // NOTE(ivan): Xbox controller state.
 struct xbox_controller_state {
 	b32 IsConnected;
-
-	xbox_controller_battery_state Battery;
 	
 	input_button_state Start;
 	input_button_state Back;
@@ -91,7 +65,7 @@ struct xbox_controller_state {
 	u8 RightTrigger;
 
 	xbox_controller_stick_state LeftStick;
-	xbox_controller_stack_state RightStick;
+	xbox_controller_stick_state RightStick;
 
 	// NOTE(ivan): Set this to non-zero to vibrate the controller.
 	// NOTE(ivan): After actual vibration these will be zeroed again.

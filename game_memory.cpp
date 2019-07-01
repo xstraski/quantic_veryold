@@ -88,7 +88,7 @@ PopStack(memory_stack *Stack) {
 
 	EnterTicketMutex(&Stack->Mutex);
 
-	uptr Size = *((uptr *)(Stack->Piece.Base + Stack->Mark + Size));
+	uptr Size = *((uptr *)(Stack->Piece.Base + Stack->Mark - sizeof(uptr)));
 	uptr RealSize = Size + sizeof(uptr);
 
 	Stack->Mark -= RealSize;

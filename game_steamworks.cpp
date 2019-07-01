@@ -34,9 +34,5 @@ GainAccessToSteamworksInterfaces(steamworks_api *SteamworksAPI) {
 	SteamworksAPI->ParentalSettings
 		= (ISteamParentalSettings *)SteamworksAPI->_CreateInterface(STEAMPARENTALSETTINGS_INTERFACE_VERSION);
 	SteamworksAPI->Input = (ISteamInput *)SteamworksAPI->_CreateInterface(STEAMINPUT_INTERFACE_VERSION);
-	SteamworksAPI->ContentServer
-		= (ISteamContentServer *)SteamworksAPI->_CreateInterface(STEAMCONTENTSERVER_INTERFACE_VERSION);
-	SteamworksAPI->PS3OverlayRender
-		= (ISteamPS3OverlayRender *)SteamworksAPI->_CreateInterface(STEAMPS3OVERLAYRENDER_INTERFACE_VERSION);
 	SteamworksAPI->Parties = (ISteamParties *)SteamworksAPI->_CreateInterface(STEAMPARTIES_INTERFACE_VERSION);
 }
