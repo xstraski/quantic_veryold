@@ -127,6 +127,24 @@ SteamWarningMessageHook(int SeverityLevel, const char *Message) {
 		GameState.PlatformAPI->Outf("[Steam-warning] %s", Message);
 }
 
+static void
+CommandQuit(char **Params, u32 NumParams) {
+	UnusedParam(Params);
+	UnusedParam(NumParams);
+	
+	GameState.PlatformAPI->QuitRequested = true;
+}
+
+#if INTERNAL
+static void
+CommandCauseAV(char **Params, u32 NumParams) {
+	UnusedParam(Params);
+	UnsuedParam(NumParams);
+
+	*((s32 *)0) = 1;
+}
+#endif // #if INTERNAL
+
 extern "C" GAME_TRIGGER(GameTrigger) {
 	switch (TriggerType) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -170,9 +188,9 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 
 					// NOTE(ivan): Register commands.
 					RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
-					RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
-					RegisterCommand(&GameState.CommandCache, "printcpu", CommandPrintCPU);
-					RegisterCommand(&GameState.CommandCache, "printram", CommandPrintRAM);
+					if (IsInternal()) {
+						RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
+					}
 
 					// NOTE(ivan): Load settings.
 					LoadSettingsFromFile(&GameState.SettingCache, "default.set");

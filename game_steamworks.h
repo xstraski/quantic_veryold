@@ -32,8 +32,8 @@ struct steamworks_api {
 	steam_api_restart_app_if_necessary *RestartAppIfNecessary;
 
 	// NOTE(ivan): Steam internal API.
-	steam_internal_context_init *ContextInit;
-	steam_internal_create_interface *CreateInterface;
+	steam_internal_context_init *_ContextInit;
+	steam_internal_create_interface *_CreateInterface;
 
 	// NOTE(ivan): Steam API interfaces.
 	ISteamClient *Client;

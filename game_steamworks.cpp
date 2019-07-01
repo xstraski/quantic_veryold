@@ -3,40 +3,40 @@
 void
 GainAccessToSteamworksInterfaces(steamworks_api *SteamworksAPI) {
 	Assert(SteamworksAPI);
-	Assert(SteamworksAPI->CreateInterface);
+	Assert(SteamworksAPI->_CreateInterface);
 	
-	SteamworksAPI->Client = (ISteamClient *)SteamworksAPI->CreateInterface(STEAMCLIENT_INTERFACE_VERSION);
-	SteamworksAPI->User = (ISteamUser *)SteamworksAPI->CreateInterface(STEAMUSER_INTERFACE_VERSION);
-	SteamworksAPI->UserStats = (ISteamUserStats *)SteamworksAPI->CreateInterface(STEAMUSERSTATS_INTERFACE_VERSION);
-	SteamworksAPI->Friends = (ISteamFriends *)SteamworksAPI->CreateInterface(STEAMFRIENDS_INTERFACE_VERSION);
-	SteamworksAPI->Utils = (ISteamUtils *)SteamworksAPI->CreateInterface(STEAMUTILS_INTERFACE_VERSION);
-	SteamworksAPI->Matchmaking = (ISteamMatchmaking *)SteamworksAPI->CreateInterface(STEAMMATCHMAKING_INTERFACE_VERSION);
+	SteamworksAPI->Client = (ISteamClient *)SteamworksAPI->_CreateInterface(STEAMCLIENT_INTERFACE_VERSION);
+	SteamworksAPI->User = (ISteamUser *)SteamworksAPI->_CreateInterface(STEAMUSER_INTERFACE_VERSION);
+	SteamworksAPI->UserStats = (ISteamUserStats *)SteamworksAPI->_CreateInterface(STEAMUSERSTATS_INTERFACE_VERSION);
+	SteamworksAPI->Friends = (ISteamFriends *)SteamworksAPI->_CreateInterface(STEAMFRIENDS_INTERFACE_VERSION);
+	SteamworksAPI->Utils = (ISteamUtils *)SteamworksAPI->_CreateInterface(STEAMUTILS_INTERFACE_VERSION);
+	SteamworksAPI->Matchmaking = (ISteamMatchmaking *)SteamworksAPI->_CreateInterface(STEAMMATCHMAKING_INTERFACE_VERSION);
 	SteamworksAPI->MatchmakingServers
-		= (ISteamMatchmakingServers *)SteamworksAPI->CreateInterface(STEAMMATCHMAKINGNSERVERS_INTERFACE_VERSION);
-	SteamworksAPI->GameSearch = (ISteamGameSearch *)SteamworksAPI->CreateInterface(STEAMGAMESEARCH_INTERFACE_VERSION);
-	SteamworksAPI->GameServer = (ISteamGameServer *)SteamworksAPI->CreateInterface(STEAMGAMESERVER_INTERFACE_VERSION);
+		= (ISteamMatchmakingServers *)SteamworksAPI->_CreateInterface(STEAMMATCHMAKINGSERVERS_INTERFACE_VERSION);
+	SteamworksAPI->GameSearch = (ISteamGameSearch *)SteamworksAPI->_CreateInterface(STEAMGAMESEARCH_INTERFACE_VERSION);
+	SteamworksAPI->GameServer = (ISteamGameServer *)SteamworksAPI->_CreateInterface(STEAMGAMESERVER_INTERFACE_VERSION);
 	SteamworksAPI->GameServerStats
-		= (ISteamGameServerStats *)SteamworksAPI->CreateInterface(STEAMGAMESERVERSTATS_INTERFACE_VERSION);
-	SteamworksAPI->Apps = (ISteamApps *)SteamworksAPI->CreateInterface(STEAMAPPS_INTERFACE_VERSION);
-	SteamworksAPI->AppList = (ISteamAppList *)SteamworksAPI->CreateInterface(STEAMAPPLIST_INTERFACE_VERSION);
-	SteamworksAPI->Networking = (ISteamNetworking *)SteamworksAPI->CreateInterface(STEAMNETWORKING_INTERFACE_VERSION);
+		= (ISteamGameServerStats *)SteamworksAPI->_CreateInterface(STEAMGAMESERVERSTATS_INTERFACE_VERSION);
+	SteamworksAPI->Apps = (ISteamApps *)SteamworksAPI->_CreateInterface(STEAMAPPS_INTERFACE_VERSION);
+	SteamworksAPI->AppList = (ISteamAppList *)SteamworksAPI->_CreateInterface(STEAMAPPLIST_INTERFACE_VERSION);
+	SteamworksAPI->Networking = (ISteamNetworking *)SteamworksAPI->_CreateInterface(STEAMNETWORKING_INTERFACE_VERSION);
 	SteamworksAPI->RemoteStorage
-		= (ISteamRemoteStorage *)SteamworksAPI->CreateInterface(STEAMREMOTESTORAGE_INTERFACE_VERSION);
-	SteamworksAPI->Screenshots = (ISteamScreenshots *)SteamworksAPI->CreateInterface(STEAMSCREENSHOTS_INTERFACE_VERSION);
-	SteamworksAPI->HTTP = (ISteamHTTP *)SteamworksAPI->CreateInterface(STEAMHTTP_INTERFACE_VERSION);
-	SteamworksAPI->Controller = (ISteamController *)SteamworksAPI->CreateInterface(STEAMCONTROLLER_INTERFACE_VERSION);
-	SteamworksAPI->UGC = (ISteamUGC *)SteamworksAPI->CreateInterface(STEAMUGC_INTERFACE_VERSION);
-	SteamworksAPI->Music = (ISteamMusic *)SteamworksAPI->CreateInterface(STEAMMUSIC_INTERFACE_VERSION);
-	SteamworksAPI->MusicRemote = (ISteamMusicRemote *)SteamworksAPI->CreateInterface(STEAMMUSICREMOTE_INTERFACE_VERSION);
-	SteamworksAPI->HTMLSurface = (ISteamHTMLSurface *)SteamworksAPI->CreateInterface(STEAMHTMLSURFACE_INTERFACE_VERSION);
-	SteamworksAPI->Inventory = (ISteamInventory *)SteamworksAPI->CreateInterface(STEAMINVENTORY_INTERFACE_VERSION);
-	SteamworksAPI->Video = (ISteamVideo *)SteamworksAPI->CreateInterface(STEAMVIDEO_INTERFACE_VERSION);
+		= (ISteamRemoteStorage *)SteamworksAPI->_CreateInterface(STEAMREMOTESTORAGE_INTERFACE_VERSION);
+	SteamworksAPI->Screenshots = (ISteamScreenshots *)SteamworksAPI->_CreateInterface(STEAMSCREENSHOTS_INTERFACE_VERSION);
+	SteamworksAPI->HTTP = (ISteamHTTP *)SteamworksAPI->_CreateInterface(STEAMHTTP_INTERFACE_VERSION);
+	SteamworksAPI->Controller = (ISteamController *)SteamworksAPI->_CreateInterface(STEAMCONTROLLER_INTERFACE_VERSION);
+	SteamworksAPI->UGC = (ISteamUGC *)SteamworksAPI->_CreateInterface(STEAMUGC_INTERFACE_VERSION);
+	SteamworksAPI->Music = (ISteamMusic *)SteamworksAPI->_CreateInterface(STEAMMUSIC_INTERFACE_VERSION);
+	SteamworksAPI->MusicRemote = (ISteamMusicRemote *)SteamworksAPI->_CreateInterface(STEAMMUSICREMOTE_INTERFACE_VERSION);
+	SteamworksAPI->HTMLSurface = (ISteamHTMLSurface *)SteamworksAPI->_CreateInterface(STEAMHTMLSURFACE_INTERFACE_VERSION);
+	SteamworksAPI->Inventory = (ISteamInventory *)SteamworksAPI->_CreateInterface(STEAMINVENTORY_INTERFACE_VERSION);
+	SteamworksAPI->Video = (ISteamVideo *)SteamworksAPI->_CreateInterface(STEAMVIDEO_INTERFACE_VERSION);
 	SteamworksAPI->ParentalSettings
-		= (ISteamParentalSettings *)SteamworksAPI->CreateInterface(STEAMPARENTALSETTINGS_INTERFACE_VERSION);
-	SteamworksAPI->Input = (ISteamInput *)SteamworksAPI->CreateInterface(STEAMINPUT_INTERFACE_VERSION);
+		= (ISteamParentalSettings *)SteamworksAPI->_CreateInterface(STEAMPARENTALSETTINGS_INTERFACE_VERSION);
+	SteamworksAPI->Input = (ISteamInput *)SteamworksAPI->_CreateInterface(STEAMINPUT_INTERFACE_VERSION);
 	SteamworksAPI->ContentServer
-		= (ISteamContentServer *)SteamworksAPI->CreateInterface(STEAMCONTENTSERVER_INTERFACE_VERSION);
+		= (ISteamContentServer *)SteamworksAPI->_CreateInterface(STEAMCONTENTSERVER_INTERFACE_VERSION);
 	SteamworksAPI->PS3OverlayRender
-		= (ISteamPS3OverlayRender *)SteamworksAPI->CreateInterface(STEAMPS3OVERLAYRENDER_INTERFACE_VERSION);
-	SteamworksAPI->Parties = (ISteamParties *)SteamworksAPI->CreateInterface(STEAMPARTIES_INTERFACE_VERSION);
+		= (ISteamPS3OverlayRender *)SteamworksAPI->_CreateInterface(STEAMPS3OVERLAYRENDER_INTERFACE_VERSION);
+	SteamworksAPI->Parties = (ISteamParties *)SteamworksAPI->_CreateInterface(STEAMPARTIES_INTERFACE_VERSION);
 }
