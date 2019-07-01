@@ -43,7 +43,7 @@ rem -DINTERNAL=1					- [debug] signals we are compiling an internal build, not f
 rem -DINTERNAL=0					- signals we are compiling a public-release build.
 rem -MDd							- [debug] use debug multithreaded DLL version of C runtime library.
 rem -MD								- use normal multithreaded DLL version of C runtime library.
-rem -Zi					  		  	- [debug] include debug information in a program database compatible with Edit&Continue.
+rem -Zi					  		  	- [debug] include debug info in a program database compatible with Edit&Continue.
 rem -Od								- [debug] disable optimization.
 if "%2"=="internal:on" set InternalBuildCompilerFlags=-DINTERNAL=1 -MDd -Zi -Od
 if "%2"=="internal:off" set InternalBuildCompilerFlags=-DINTERNAL=0 -MD
@@ -61,6 +61,18 @@ rem -----------------------------------
 if not exist build mkdir build
 
 rem -----------------------------------
+rem Clean up previous build.
+rem -----------------------------------
+call clean.bat
+
+rem -----------------------------------
+rem Prepare dependenncies.
+rem -----------------------------------
+rem Steamworks:
+if "%1"=="x86" copy deps\steamworks\redistributable_bin\steam_api.dll build\steam_api.dll > NUL 2> NUL
+if "%1"=="x64" copy deps\steamworks\redistributable_bin\win64\steam_api64.dll build\steam_api64.dll > NUL 2> NUL
+
+rem -----------------------------------
 rem Build main executable.
 rem -----------------------------------
 rem Used external libraries, except kernel32.lib:
@@ -71,7 +83,7 @@ rem 'comctl32.lib'					- for Microsoft Common Controls.
 rem 'winmm.lib'						- for mmsystem.h interface, timeBeginPeriod()/timeEndPeriod().
 rem 'opengl32.lib'					- for OpenGL Compatibility-Profile interface.
 pushd build
-cl -Ferun%OutputName%.exe -Fmrun%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game_platform_win32.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! user32.lib gdi32.lib ole32.lib comctl32.lib winmm.lib opengl32.lib -pdb:run%OutputName%.pdb
+cl -Ferun%OutputName%.exe -Fmrun%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game_platform_win32.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! user32.lib gdi32.lib ole32.lib comctl32.lib winmm.lib -pdb:run%OutputName%.pdb
 set BuildResult=%errorlevel%
 popd
 if not %BuildResult%==0 goto ErrorBuildFailed
@@ -80,7 +92,7 @@ rem -----------------------------------
 rem Build game core.
 rem -----------------------------------
 pushd build
-cl -Fe%OutputName%.dll -Fm%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! -pdb:%OutputName%.pdb -dll -export:GameUpdate opengl32.lib
+cl -Fe%OutputName%.dll -Fm%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! -pdb:%OutputName%.pdb -dll -export:GameTrigger
 set BuildResult=%errorlevel%
 popd
 if not %BuildResult%==0 goto ErrorBuildFailed

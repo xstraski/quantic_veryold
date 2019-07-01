@@ -70,11 +70,40 @@
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 // NOTE(ivan): Win32 XInput prototypes.
+#define X_INPUT_GET_BATTERY_INFORMATION(Name) DWORD WINAPI Name(DWORD UserIndex, BYTE DevType, XINPUT_BATTERY_INFORMATION *BatteryInformation)
+typedef X_INPUT_GET_BATTERY_INFORMATION(x_input_get_battery_information);
+
 #define X_INPUT_GET_STATE(Name) DWORD WINAPI Name(DWORD UserIndex, XINPUT_STATE *State)
 typedef X_INPUT_GET_STATE(x_input_get_state);
 
 #define X_INPUT_SET_STATE(Name) DWORD WINAPI Name(DWORD UserIndex, XINPUT_VIBRATION *Vibration)
 typedef X_INPUT_SET_STATE(x_input_set_state);
+
+// NOTE(ivan): Win32 XInput module structure.
+struct win32_xinput_module {
+	b32 IsValid; // NOTE(ivan): False if something went wrong and the XInput module is not loaded.
+	HMODULE XInputLibrary;
+
+	x_input_get_battery_information *GetBatteryInformation;
+	x_input_get_state *GetState;
+	x_input_set_state *SetState;
+};
+
+// NOTE(ivan): Win32-specific Steamworks module structure.
+struct win32_steamworks_module {
+	b32 IsValid; // NOTE(ivan): False if something went wrong and the XInput module is not loaded.
+	HMODULE SteamLibrary;
+	
+	steamworks_api SteamworksAPI;
+};
+
+// NOTE(ivan): Win32-specific game module structure.
+struct win32_game_module {
+	b32 IsValid; // NOTE(ivan): False if something went wrong and the game module is not loaded. 
+	HMODULE GameLibrary;
+
+	game_trigger *GameTrigger;
+};
 
 // NOTE(ivan): Win32 globals.
 static struct {
@@ -93,24 +122,7 @@ static struct {
 
 	// NOTE(ivan): Game input, needs to be global to be accessed by Win32WindowProc()'s raw input routines.
 	game_input *GameInput;
-};
-
-// NOTE(ivan): Win32 XInput module structure.
-struct win32_xinput_module {
-	b32 IsValid; // NOTE(ivan): False if something went wrong and the XInput module is not loaded.
-	HMODULE XInputLibrary;
-	
-	x_input_get_state *GetState;
-	x_input_set_state *SetState;
-};
-
-// NOTE(ivan): Win32-specific game module structure.
-struct win32_game_module {
-	b32 IsValid; // NOTE(ivan): False if something went wrong and the game module is not loaded.	
-	HMODULE GameLibrary;
-
-	game_trigger *GameTrigger;
-};
+} Win32State;
 
 // NOTE(ivan): Win32-specific system structure for setting thread name by Win32SetThreadName.
 struct win32_thread_name {
@@ -173,6 +185,24 @@ static PLATFORM_CHECK_PARAM_VALUE(Win32CheckParamValue) {
 	return Win32State.ArgV[Index + 1];
 }
 
+static PLATFORM_OUTF(Win32Outf) {
+	Assert(Format);
+}
+
+static PLATFORM_CRASHF(Win32Outf) {
+	Assert(Format);
+	ExitProcess(0);
+}
+
+static PLATFORM_XBOX_VIBRATE(Win32XboxVibrate) {
+	XINPUT_VIBRATION Vibration = {};
+
+	Vibration.wLeftMotorSpeed = LeftValue;
+	Vibration.wRightMotorSpeed = RightValue;
+
+	Win32State.XInput.SetState(ControllerId, &Vibration);
+}
+
 static cpu_info
 Win32GatherCPUInfo(void) {
 	cpu_info CPUInfo = {};
@@ -186,7 +216,7 @@ Win32GatherCPUInfo(void) {
 	// NOTE(ivan): Obtain vendor name.
 	__cpuid(CPUId, 0);
 
-	*((int *)CPUInfo.VendorName + 0) = CPUId[EBX];
+	*((int *)(CPUInfo.VendorName + 0)) = CPUId[EBX];
 	*((int *)(CPUInfo.VendorName + 4)) = CPUId[EDX];
 	*((int *)(CPUInfo.VendorName + 8)) = CPUId[ECX];
 
@@ -311,27 +341,11 @@ Win32GatherCPUInfo(void) {
 	return CPUInfo;
 }
 
-inline win32_game_module
-Win32LoadGameModule(const char *SharedName) {
-	Assert(SharedName);
-	
-	win32_game_module Result = {};
-
-	char GameLibraryName[1024] = {};
-	snprintf(GameLibraryName, ArraySize(GameLibraryName) - 1, "%s.dll", SharedName);
-
-	Result.GameLibrary = LoadLibraryA(GameLibraryName);
-	if (Result.GameLibrary) {
-		Result.ConnectGame = (connect_game *)GetProcAddress(Result.GameLibrary, "ConnectGame");
-		Result.DisconnectGame = (disconnect_game *)GetProcAddress(Result.GameLibrary, "DisconnectGame");
-		Result.GameUpdate = (game_update *)GetProcAddress(Result.GameLibrary, "GameUpdate");
-
-		if (Result.ConnectGame && Result.DisconnectGame && Result.GameUpdate) {
-			Result.IsValid = true;
-		}
-	}
-
-	return Result;
+static X_INPUT_GET_BATTERY_INFORMATION(Win32XInputGetBatteryInformationStub) {
+	UnusedParam(UserIndex);
+	UnusedParam(DevType);
+	UnusedParam(BatteryInformation);
+	return ERROR_DEVICE_NOT_CONNECTED;
 }
 
 static X_INPUT_GET_STATE(Win32XInputGetStateStub) {
@@ -356,14 +370,17 @@ Win32LoadXInputModule(void) {
 	if (!Result.XInputLibrary)
 		Result.XInputLibrary = LoadLibraryA("xinput1_3.dll");
 	if (Result.XInputLibrary) {
+		Result.GetBatteryInformation
+			= (x_input_get_battery_information *)GetProcAddress(Result.XInputLibrary, "XInputGetBatteryInformation");
 		Result.GetState = (x_input_get_state *)GetProcAddress(Result.XInputLibrary, "XInputGetState");
 		Result.SetState = (x_input_set_state *)GetProcAddress(Result.XInputLibrary, "XInputSetState");
 
-		if (Result.GetState && Result.SetState)
+		if (Result.GetBatteryInformation && Result.GetState && Result.SetState)
 			Result.IsValid = true;
 	}
 
 	if (!Result.IsValid) {
+		Result.GetBatteryInformation = Win32XInputGetBatteryInformationStub;
 		Result.GetState = Win32XInputGetStateStub;
 		Result.SetState = Win32XInputSetStateStub;
 	}
@@ -656,6 +673,92 @@ Win32MapVKToKeyCode(u32 VKCode, u32 ScanCode, b32 IsE0, b32 IsE1, key_code *OutC
 	return true;
 }
 
+inline win32_game_module
+Win32LoadGameModule(const char *SharedName) {
+	Assert(SharedName);
+	
+	win32_game_module Result = {};
+
+	char GameLibraryName[1024] = {};
+	snprintf(GameLibraryName, ArraySize(GameLibraryName) - 1, "%s.dll", SharedName);
+
+	Result.GameLibrary = LoadLibraryA(GameLibraryName);
+	if (Result.GameLibrary) {
+		Result.GameTrigger = (game_trigger *)GetProcAddress(Result.GameLibrary, "GameTrigger");
+		if (Result.GameTrigger)
+			Result.IsValid = true;
+	}
+
+	return Result;
+}
+
+inline win32_steamworks_module
+Win32LoadSteamworksModule(void) {
+	win32_steamworks_module Result = {};
+
+	if (IsTargetCPU32Bit())
+		Result.SteamLibrary = LoadLibraryA("steam_api.dll");
+	else if (IsTargetCPU64Bit())
+		Result.SteamLibrary = LoadLibraryA("steam_api64.dll");
+	if (Result.SteamLibrary) {
+		Result.SteamworksAPI.Init = (steam_api_init *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Init");
+		Result.SteamworksAPI.Shutdown = (steam_api_shutdown *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Shutdown");
+		Result.SteamworksAPI.IsSteamRunning
+			= (steam_api_is_steam_running *)GetProcAddress(Result.SteamLibrary, "SteamAPI_IsSteamRunning");
+		Result.SteamworksAPI.RestartAppIfNecessary
+			= (steam_api_restart_app_if_necessary *)GetProcAddress(Result.SteamLibrary, "SteamAPI_RestartAppIfNecessary");
+
+		Result.SteamworksAPI.ContextInit
+			= (steam_internal_context_init *)GetProcAddress(Result.SteamLibrary, "SteamInternal_ContextInit");
+		Result.SteamworksAPI.CreateInterface
+			= (steam_internal_create_interface *)GetProcAddress(Result.SteamLibrary, "SteamInternal_CreateInterface");
+
+		if (Result.SteamworksAPI.Init &&
+			Result.SteamworksAPI.Shutdown &&
+			Result.SteamworksAPI.IsSteamRunning &&
+			Result.SteamworksAPI.RestartAppIfNecessary &&
+			Result.SteamworksAPI.ContextInit &&
+			Result.SteamworksAPI.CreateInterface)
+			Result.IsValid = true;
+	}
+
+	return Result;
+}
+
+static uptr
+Win32CalculateDesirableFreeMemorySize(void) {
+	uptr Result;
+	
+	MEMORYSTATUSEX MemStat; // NOTE(ivan): Detect how much memory is available.
+	MemStat.dwLength = sizeof(MemStat);
+	if (GlobalMemoryStatusEx(&MemStat)) {
+		// NOTE(ivan): Capture 80% of free RAM space and leave the rest for internal platform-layer and OS needs.
+		// TODO(ivan): Play aroud with this percent to achieve maximum RAM space allocation
+		// without stressing the OS and the environment too much.
+		Result = (uptr)((f64)MemStat.ullAvailPhys * 0.8);
+	} else {
+		// NOTE(ivan): Available free RAM detection went wrong
+		// for some strange reason - try to guess it approximately.
+		if (IsTargetCPU32Bit()) {
+			BOOL Is64BitWindows = FALSE;
+			if (!IsWow64Process(GetCurrentProcess(), &Is64BitWindows))
+				Is64BitWindows = FALSE;
+
+			// TODO(ivan): 64-bit Windows allows 32-bit programs to eat 3 gigabytes of RAM
+			// instead of 2 gigabytes as in 32-bit Windows.
+			if (Is64BitWindows)
+				Result = Gigabytes(3); // NOTE(ivan): Requesting 3Gb of memory for 32-bit program
+			// requires it being built with /largeaddressaware MS linker option.
+			else
+				Result = Gigabytes(2);
+		} else if (IsTargetCPU64Bit()) {
+			Result = Gigabytes(4);
+		}
+	}
+
+	return Result;
+}
+
 static LRESULT CALLBACK
 Win32WindowProc(HWND Window, UINT Msg, WPARAM W, LPARAM L) {
 	switch (Msg) {
@@ -696,38 +799,38 @@ Win32WindowProc(HWND Window, UINT Msg, WPARAM W, LPARAM L) {
 
 			switch (RawMouse->usButtonFlags) {
 			case RI_MOUSE_BUTTON_1_DOWN: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[0], true);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Left], true);
 			} break;
 			case RI_MOUSE_BUTTON_1_UP: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[0], false);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Left], false);
 			} break;
 
 			case RI_MOUSE_BUTTON_2_DOWN: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[1], true);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Middle], true);
 			} break;
 			case RI_MOUSE_BUTTON_2_UP: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[1], false);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Middle], false);
 			} break;
 
 			case RI_MOUSE_BUTTON_3_DOWN: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[2], true);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Right], true);
 			} break;
 			case RI_MOUSE_BUTTON_3_UP: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[2], false);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_Right], false);
 			} break;
 
 			case RI_MOUSE_BUTTON_4_DOWN: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[3], true);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_X1], true);
 			} break;
 			case RI_MOUSE_BUTTON_4_UP: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[3], false);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_X1], false);
 			} break;
 
 			case RI_MOUSE_BUTTON_5_DOWN: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[4], true);
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_X2], true);
 			} break;
-			case RI_MOUSE_BUTTON_5UP: {
-				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[4], false);
+			case RI_MOUSE_BUTTON_5_UP: {
+				Win32ProcessKbOrMouseButton(&Win32State.GameInput->MouseButtons[MouseButton_X2], false);
 			} break;
 
 			case RI_MOUSE_WHEEL: {
@@ -762,7 +865,7 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 	UnusedParam(CommandLine);
 
 	platform_api Win32API = {};
-
+	
 	game_memory GameMemory = {};
 	game_clocks GameClocks = {};
 	game_input GameInput = {};
@@ -788,6 +891,8 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 	Win32API.CheckParam = Win32CheckParam;
 	Win32API.CheckParamValue = Win32CheckParamValue;
+	Win32API.Outf = Win32Outf;
+	Win32API.Crashf = Win32Crashf;
 
 	// NOTE(ivan): Check whether the host OS is not obsolete.
 	if (IsWindows7OrGreater()) {
@@ -858,38 +963,9 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 			SetCurrentDirectoryA(ParamCWD);
 
 		// NOTE(ivan): Create game primary storage.
-		uptr GameMemorySize = Gigabytes(2);
-
-		MEMORYSTATUSEX MemStat; // NOTE(ivan): Detect how much memory is available.
-		MemStat.dwLength = sizeof(MemStat);
-		if (GlobalMemoryStatusEx(&MemStat)) {
-			// NOTE(ivan): Capture 80% of free RAM space and leave the rest for internal platform-layer and OS needs.
-			// TODO(ivan): Play aroud with this percent to achieve maximum RAM space allocation
-			// without stretting the OS and the environment too much.
-			GameMemorySize = (uptr)((f64)MemStat.ullAvailPhys * 0.8);
-		} else {
-			// NOTE(ivan): Available free RAM detection went wrong
-			// for some strange reason - try to guess it approximately.
-			if (IsTargetCPU32Bit()) {
-				BOOL Is64BitWindows = FALSE;
-				if (!IsWow64Process(GetCurrentProcess(), &Is64BitWindows))
-					Is64BitWindows = FALSE;
-
-				// TODO(ivan): 64-bit Windows allows 32-bit programs to eat 3 gigabytes of RAM
-				// instead of 2 gigabytes as in 32-bit Windows.
-				if (Is64BitWindows)
-					GameMemorySize = Gigabytes(3); // NOTE(ivan): Requesting 3Gb of memory for 32-bit program
-				                                   // requires it being built with /largeaddressaware MS linker option.
-				else
-					GameMemorySize = Gigabytes(2);
-			} else if (IsTargetCPU64Bit()) {
-				GameMemorySize = Gigabytes(4);
-			}
-		}
-
-		GameMemory.FreeStorage.Base = (u8 *)VirtualAlloc(0, GameMemorySize, MEM_COMMIT, PAGE_READWRITE);
+		GameMemory.FreeStorage.Size = Win32CalculateDesirableFreeMemorySize();
+		GameMemory.FreeStorage.Base = (u8 *)VirtualAlloc(0, GameMemory.FreeStorage.Size, MEM_COMMIT, PAGE_READWRITE);
 		if (GameMemory.FreeStorage.Base) {
-			GameMemory.FreeStorage.Size = GameMemorySize;
 			GameMemory.StorageTotalSize = GameMemorySize;
 
 			// NOTE(ivan): Create main window.
@@ -938,220 +1014,329 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 					// NOTE(ivan): Connect to XInput for processing xbox controller(s) input.
 					win32_xinput_module XInputModule = Win32LoadXInputModule();
 
-					// NOTE(ivan): Connect to game module.
-					win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
-					if (GameModule.IsValid) {
-						GameModule.GameTrigger(GameTriggerType_Prepare,
-											   &Win32API,
-											   &GameMemory,
-											   &GameClocks,
-											   &GameInput);
+					// NOTE(ivan): Connect to Steamworks.
+					win32_steamworks_module SteamworksModule = Win32LoadSteamworksModule();
+					if (SteamworksModule.IsValid) {
+						// NOTE(ivan): Connect to game module.
+						win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
+						if (GameModule.IsValid) {
+							GameModule.GameTrigger(GameTriggerType_Prepare,
+												   &Win32API,
+												   &SteamworksModule.SteamworksAPI,
+												   &GameMemory,
+												   &GameClocks,
+												   &GameInput);
 
-						// NOTE(ivan): When all initialization is done, present the window.
-						ShowWindow(Window, ShowCommand);
-						SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
+							// NOTE(ivan): When all initialization is done, present the window.
+							ShowWindow(Window, ShowCommand);
+							SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
 
-						// NOTE(ivan): Prepare game clocks and timings.
-						u64 LastCPUClockCounter = __rdtsc();
-						u64 LastCycleCounter = Win32GetClock();
+							// NOTE(ivan): Prepare game clocks and timings.
+							u64 LastCPUClockCounter = __rdtsc();
+							u64 LastCycleCounter = Win32GetClock();
 
-						// NOTE(ivan): Primary loop.
-						b32 IsGameRunning = true;
-						while (IsGameRunning) {
-							// NOTE(ivan): Process OS messages.
-							static MSG Msg;
-							while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
-								if (Msg.message == WM_QUIT)
-									IsGameRunning = false;
+							// NOTE(ivan): Primary loop.
+							b32 IsGameRunning = true;
+							while (IsGameRunning) {
+								// NOTE(ivan): Process OS messages.
+								static MSG Msg;
+								while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
+									if (Msg.message == WM_QUIT)
+										IsGameRunning = false;
 
-								TranslateMessage(&Msg);
-								DispatchMessageA(&Msg);
-							}
-
-							// NOTE(ivan): Do these routines only in case the main window is in focus.
-							if (Win32State.IsWindowActive) {
-								// NOTE(ivan): Process Xbox controller state.
-								// TODO(ivan): Need to not poll disconnected controllers to avoid
-								// XInput frame rate hit on older libraries.
-								// TODO(ivan): Should we poll this more frequently?
-								DWORD MaxXboxControllerCount = XUSER_MAX_COUNT;
-								if (MaxXboxControllerCount > ArraySize(GameInput.XboxControllers))
-									MaxXboxControllerCount = ArraySize(GameInput.XboxControllers);
-								for (u32 Index = 0; Index < MaxXboxControllerCount; Index++) {
-									xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
-									XINPUT_STATE XboxControllerState;
-									if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
-										XboxController->IsConnected = true;
-
-										// TODO(ivan): See if XboxControllerState.dwPacketNumber increments too rapidly.
-										XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
-
-										Win32ProcessXInputDigitalButton(&XboxController->Start,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_START);
-										Win32ProcessXInputDigitalButton(&XboxController->Back,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_BACK);
-
-										Win32ProcessXInputDigitalButton(&XboxController->A,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_A);
-										Win32ProcessXInputDigitalButton(&XboxController->B,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_B);
-										Win32ProcessXInputDigitalButton(&XboxController->X,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_X);
-										Win32ProcessXInputDigitalButton(&XboxController->Y,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_Y);
-
-										Win32ProcessXInputDigitalButton(&XboxController->Up,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_DPAD_UP);
-										Win32ProcessXInputDigitalButton(&XboxController->Down,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_DPAD_DOWN);
-										Win32ProcessXInputDigitalButton(&XboxController->Left,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_DPAD_LEFT);
-										Win32ProcessXInputDigitalButton(&XboxController->Right,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_DPAD_RIGHT);
-
-										Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_LEFT_SHOULDER);
-										Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
-																		XboxGamepad->wButtons,
-																		XINPUT_GAMEPAD_RIGHT_SHOULDER);
-
-										XboxController->LeftTrigger = XboxGamepad->bLeftTrigger;
-										XboxController->RightTrigger = XboxGamepad->bRightTrigger;
-
-										XboxController->LeftStickPos.X =
-											Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
-																		 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-										XboxController->LeftStickPos.Y =
-											Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
-																		 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-
-										XboxController->RightStickPos.X =
-											Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
-																		 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-										XboxController->RightStickPos.Y =
-											Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
-																		 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-									} else {
-										XboxController->IsConnected = false;
-									}
+									TranslateMessage(&Msg);
+									DispatchMessageA(&Msg);
 								}
+								
+								// NOTE(ivan): Do these routines only in case the main window is in focus.
+								if (Win32State.IsWindowActive) {
+									// NOTE(ivan): Process Xbox controllers state.
+									// TODO(ivan): Need to not poll disconnected controllers to avoid
+									// XInput frame rate hit on older libraries.
+									// TODO(ivan): Should we poll this more frequently?
+									DWORD MaxXboxControllerCount = XUSER_MAX_COUNT;
+									if (MaxXboxControllerCount > ArraySize(GameInput.XboxControllers))
+										MaxXboxControllerCount = ArraySize(GameInput.XboxControllers);
+									for (u32 Index = 0; Index < MaxXboxControllerCount; Index++) {
+										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+										XINPUT_STATE XboxControllerState;
+										if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
+											XboxController->IsConnected = true;
+										
+											XINPUT_BATTERY_INFORMATION XboxControllerBattery;
+											if (XInputModule.GetBatteryInformation(Index, BATTERY_DEVTYPE_GAMEPAD,
+																				   &XboxControllerBattery) == ERROR_SUCCESS) {
+												switch (XboxControllerBattery.BatteryType) {
+												case BATTERY_TYPE_DISCONNNECTED:
+													XboxController->BatteryType = XboxControllerBatteryType_Disconnected;
+													break;
 
-								// NOTE(ivan): Process Win32-side input events.
-								if (GameInput.KbButtons[KeyCode_F4].IsDown &&
-									(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
-									 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
-									IsGameRunning = false;
+												case BATTERY_TYPE_WIRED:
+													XboxController->BatteryType = XboxControllerBatteryType_Wired;
+													break;
 
-								// NOTE(ivan): Update game frame.
-								GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0);
+												case BATTERY_TYPE_ALKALINE:
+													XboxController->BatteryType = XboxControllerBatteryType_Alkaline;
+													break;
 
-								// NOTE(ivan): Before the next frame, make all input events obsolete.
-								for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
-									GameInput.KbButtons[Index].IsNew = false;
+												case BATTERY_TYPE_NIMH:
+													XboxController->BatteryType = XboxControllerBatteryType_Nimh;
+													break;
 
-								for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
-									GameInput.MouseButtons[Index].IsNew = false;
+												case BATTERY_TYPE_UNKNOWN:
+												default:
+													XboxController->BatteryType = XboxControllerBatteryType_Unknown;
+													break;
+												}
 
-								for (u32 Index = 0; Index < ArraySize(GameInput.XboxControllers); Index++) {
-									xbox_controller_state *XboxController = &GameInput.XboxController[Index];
+												switch (XboxControllerBattery.BatteryLevel) {
+												case BATTERY_LEVEL_EMPTY:
+													XboxConntroller->BatteryLevel = XboxControllerBatteryLevel_Empty;
+													break;
 
-									XboxController->Start.IsNew = false;
-									XboxController->Back.IsNew = false;
+												case BATTERY_LEVEL_LOW:
+													XboxConntroller->BatteryLevel = XboxControllerBatteryLevel_Low;
+													break;
 
-									XboxController->A.IsNew = false;
-									XboxController->B.IsNew = false;
-									XboxController->X.IsNew = false;
-									XboxController->Y.IsNew = false;
+												case BATTERY_LEVEL_MEDIUM:
+													XboxConntroller->BatteryLevel = XboxControllerBatteryLevel_Medium;
+													break;
 
-									XboxController->Up.IsNew = false;
-									XboxController->Down.IsNew = false;
-									XboxController->Left.IsNew = false;
-									XboxController->Right.IsNew = false;
+												case BATTERY_LEVEL_FULL:
+													XboxConntroller->BatteryLevel = XboxControllerBatteryLevel_Full;
+													break;
+												}
+											} else {
+												XboxController->BatteryType = XboxControllerBatteryType_Unknown;
+												XboxController->BatteryLevel = XboxControllerBatteryLevel_Unknown;
+											}
 
-									XboxController->LeftBumper.IsNew = false;
-									XboxController->RightBumper.IsNew = false;
+											// TODO(ivan): See if XboxControllerState.dwPacketNumber increments too rapidly.
+											XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
 
-									XboxController->LeftStick.IsNew = false;
-									XboxController->RightStick.IsNew = false;
-								}
+											Win32ProcessXInputDigitalButton(&XboxController->Start,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_START);
+											Win32ProcessXInputDigitalButton(&XboxController->Back,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_BACK);
 
-								// NOTE(ivan): Escape primary loop if quit has been requested.
-								if (Win32API.QuitRequested)
-									IsGameRunning = false;
+											Win32ProcessXInputDigitalButton(&XboxController->A,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_A);
+											Win32ProcessXInputDigitalButton(&XboxController->B,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_B);
+											Win32ProcessXInputDigitalButton(&XboxController->X,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_X);
+											Win32ProcessXInputDigitalButton(&XboxController->Y,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_Y);
 
-								// NOTE(ivan): Finalize timings.
-								u64 EndCycleCounter = Win32GetClock();
-								f32 CycleSecondsElapsed = Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
-								if (CycleSecondsElapsed < GameTargetFramerate) {
-									while (CycleSecondsElapsed < GameTargetFramerate) {
-										if (IsSleepGranular) {
-											DWORD SleepMS = (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
-											if (SleepMS)
-												Sleep(SleepMS);
+											Win32ProcessXInputDigitalButton(&XboxController->Up,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_DPAD_UP);
+											Win32ProcessXInputDigitalButton(&XboxController->Down,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_DPAD_DOWN);
+											Win32ProcessXInputDigitalButton(&XboxController->Left,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_DPAD_LEFT);
+											Win32ProcessXInputDigitalButton(&XboxController->Right,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_DPAD_RIGHT);
+
+											Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_LEFT_SHOULDER);
+											Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
+																			XboxGamepad->wButtons,
+																			XINPUT_GAMEPAD_RIGHT_SHOULDER);
+
+											XboxController->LeftTrigger = XboxGamepad->bLeftTrigger;
+											XboxController->RightTrigger = XboxGamepad->bRightTrigger;
+
+											XboxController->LeftStickPos.X =
+												Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
+																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+											XboxController->LeftStickPos.Y =
+												Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
+																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+
+											XboxController->RightStickPos.X =
+												Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
+																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+											XboxController->RightStickPos.Y =
+												Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
+																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+
+											// NOTE(ivan): Vibrate if requested.
+											if (XboxController->DoLeftVibration || XboxController->DoRightVibration) {
+												XINPUT_VIBRATION Vibration;
+												Vibration.wLeftMotorSpeed = XboxController->DoLeftVibration;
+												Vibration.wRightMotorSpeed = XboxController->DoRightVibration;
+
+												XInputModule.SetState(Index, &Vibration);
+
+												XboxController->DoLeftVibration = 0;
+												XboxController->DoRightVibration = 0;
+											}
+										} else {
+											XboxController->IsConnected = false;
 										}
-
-										CycleSecondsElapsed = Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
 									}
+
+									// NOTE(ivan): Process Steam controllers state.
+									// TODO(ivan): Implement Steam controllers state processing.
+									DWORD MaxSteamControllerCount = STEAM_CONTROLLER_MAX_COUNT;
+									if (MaxSteamControllerCount > ArraySize(GameInput.SteamControllers))
+										MaxSteamControllerCount = ArraySize(GameInput.SteamControllers);
+									for (u32 Index = 0; Index < MaxSteamControllerCount; Index++) {
+										steam_controller_state *SteamController = &GameInput.SteamControllers[Index];
+									}
+
+									// NOTE(ivan): Process Win32-side input events.
+									if (GameInput.KbButtons[KeyCode_F4].IsDown &&
+										(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
+										 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
+										IsGameRunning = false;
+
+									if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
+										Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
+
+									// NOTE(ivan): Update game frame.
+									GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0, 0);
+
+									// NOTE(ivan): Before the next frame, make all input events obsolete.
+									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
+										GameInput.KbButtons[Index].IsNew = false;
+
+									for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
+										GameInput.MouseButtons[Index].IsNew = false;
+
+									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+
+										XboxController->Start.IsNew = false;
+										XboxController->Back.IsNew = false;
+
+										XboxController->A.IsNew = false;
+										XboxController->B.IsNew = false;
+										XboxController->X.IsNew = false;
+										XboxController->Y.IsNew = false;
+
+										XboxController->Up.IsNew = false;
+										XboxController->Down.IsNew = false;
+										XboxController->Left.IsNew = false;
+										XboxController->Right.IsNew = false;
+
+										XboxController->LeftBumper.IsNew = false;
+										XboxController->RightBumper.IsNew = false;
+
+										XboxController->LeftStick.IsNew = false;
+										XboxController->RightStick.IsNew = false;
+									}
+
+									for (u32 Index = 0; Index < MaxSteamControllers; Index++) {
+										steam_controller_state *SteamController = &GameInput.SteamControllers[Index];
+
+										SteamController->Start.IsNew = false;
+										SteamController->Select.IsNew = false;
+
+										SteamController->A.IsNew = false;
+										SteamController->B.IsNew = false;
+										SteamController->X.IsNew = false;
+										SteamController->Y.IsNew = false;
+
+										SteamController->Up.IsNew = false;
+										SteamController->Down.IsNew = false;
+										SteamController->Left.IsNew = false;
+										SteamController->Right.IsNew = false;
+
+										SteamController->LeftBumper.IsNew = false;
+										SteamController->RightBumper.IsNew = false;
+
+										SteamController->LeftTrigger.IsNew = false;
+										SteamController->RightTrigger.IsNew = false;
+									}
+
+									// NOTE(ivan): Escape primary loop if quit has been requested.
+									if (Win32API.QuitRequested)
+										IsGameRunning = false;
+
+									// NOTE(ivan): Finalize timings and synchronize framerate.
+									u64 EndCycleCounter = Win32GetClock();
+									f32 CycleSecondsElapsed =
+										Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
+										
+									if (CycleSecondsElapsed < GameTargetFramerate) {
+										while (CycleSecondsElapsed < GameTargetFramerate) {
+											if (IsSleepGranular) {
+												DWORD SleepMS
+													= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
+												if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
+													Sleep(SleepMS);
+											}
+
+											CycleSecondsElapsed
+												= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+										}
+									}
+									GameClocks.SecondsPerFrame = CycleSecondsElapsed;
+
+									u64 EndCPUClockCounter = __rdtsc();
+									GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
+
+									EndCycleCounter = Win32GetClock();
+									GameClocks.FramesPerSecond =
+										(f32)((f64)Win32State.PerformanceFrequency
+											  / (EndCycleCounter - LastCycleCounter));
+
+									LastCPUClockCounter = __rdtsc();
+									LastCycleCounter = EndCycleCounter;
 								}
-								GameClocks.SecondsPerFrame = CycleSecondsElapsed;
-
-								u64 EndCPUClockCounter = __rdtsc();
-								GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
-
-								EndCycleCounter = Win32GetClock();
-								GameClocks.FramesPerSecond =
-									(f32)((f64)Win32State.PerformanceFrequency / (EndCycleCounter - LastCycleCounter));
-
-								LastCPUClockCounter = __rdtsc();
-								LastCycleCounter = EndCycleCounter;
 							}
+
+							GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0, 0);
+							FreeLibrary(GameModule.GameLibrary);
+						} else {
+							// NOTE(ivan): Game module cannot be loaded.
+							Win32Crashf(GAMENAME " DLL cannot be loaded!");
 						}
-
-						GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0);
 					} else {
-						// NOTE(ivan): Game module cannot be loaded.
-						// TODO(ivan): Diagnostics.
+						// NOTE(ivan): Game cannot load Steamworks.
+						Win32Crashf(GAMENAME " cannot load Steamworks DLL!");
 					}
-
-					FreeLibrary(GameModule.GameLibrary);
+					
 					FreeLibrary(XInputModule.XInputLibrary);
 
 					RawDevices[0].dwFlags = RIDEV_REMOVE;
 					RawDevices[1].dwFlags = RIDEV_REMOVE;
 					RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
+
+					ReleaseDC(Window, WindowDC);
 				} else {
 					// NOTE(ivan): Game window cannot be created.
-					// TODO(ivan): Diagnostics.
+					Win32Crashf(GAMENAME " window cannot be created!");
 				}
 
-				DeleteDC(Window, WindowDC);
 				DestroyWindow(Window);
 			} else {
 				// NOTE(ivan): Game window class cannot be registered.
-				// TODO(ivan): Diagnostics.
+				Win32Crashf(GAMENAME " window class cannot be registered!");
 			}
 
 			VirtualFree(GameMemory.FreeStorage.Base, 0, MEM_RELEASE);
 		} else {
 			// NOTE(ivan): Game primary storage cannot be allocated.
-			// TODO(ivan): Diagnostics.
+			Win32Crashf(GAMENAME " primary storage cannnot be allocated!");
 		}
 
 		CoUninitialize();
 	} else {
 		// NOTE(ivan): Obsolete OS.
-		// TODO(ivan): Diagnostics.
+		Win32Crashf(GAMENAME " requires Windows 7 or newer OS!");
 	}
 
 	return 0;

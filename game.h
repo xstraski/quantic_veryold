@@ -1,6 +1,7 @@
 #ifndef GAME_H
 #define GAME_H
 
+#include "game_steamworks.h"
 #include "game_keys.h"
 #include "game_math.h"
 #include "game_memory.h"
@@ -9,15 +10,20 @@
 // NOTE(ivan): Should be one single word with no spaces and special symbols.
 #define GAMENAME "Quantic"
 
+// NOTE(ivan): Game steam appid.
+// NOTE(ivan): Game steam appid 0 is invalid.
+#define GAME_STEAM_APPID 0
+
 // NOTE(ivan): Game memory.
 // NOTE(ivan): Game memory structure represents game primary storage which cannot be grown
 // and is meant to be partitioned to various memory containers at game initialization. The whole chunk
-// of primary storage is always initialized zeroed.
+// of primary storage is always initially zeroed.
 struct game_memory {
 	piece FreeStorage;     // NOTE(ivan): Storage's starting address of its free space and size of this space in bytes.
 	uptr StorageTotalSize; // NOTE(ivan): Storage's total size in bytes.
 
-	ticket_mutex Mutex; // NOTE(ivan): For synchronization, used by EatGameMemory() function.
+	// NOTE(ivan): For synchronization, used by EatGameMemory() function.
+	ticket_mutex Mutex;
 };
 
 // NOTE(ivan): Game clocks and timings for current frame.
@@ -41,9 +47,33 @@ IsNewlyPressed(input_button_state *Button) {
 	return !Button->WasDown && Button->IsDown && Button->IsNew;
 }
 
+// NOTE(ivan): Xbox controllers maximum count.
+#define MAX_XBOX_CONTROLLERS_COUNT 4
+
+// NOTE(ivan): Xbox controller battery type.
+enum xbox_controller_battery_type {
+	XboxControllerBatteryType_Disconnected,
+	XboxControllerBatteryType_Wired,
+	XboxControllerBatteryType_Alkaline,
+	XboxControllerBatteryType_Nimh,
+	XboxControllerBatteryType_Unknown
+};
+
+// NOTE(ivan): Xbox controller battery charge level.
+enum xbox_controller_battery_level {
+	XboxControllerBatteryLevel_Empty,
+	XboxControllerBatteryLevel_Low,
+	XboxControllerBatteryLevel_Medium,
+	XboxControllerBatteryLevel_Full,
+	XboxControllerBatteryLevel_Unknown
+};
+
 // NOTE(ivan): Xbox controller state.
 struct xbox_controller_state {
 	b32 IsConnected;
+
+	xbox_controller_battery_type BatteryType;
+	xbox_controller_battery_level BatteryLevel;
 	
 	input_button_state Start;
 	input_button_state Back;
@@ -68,23 +98,61 @@ struct xbox_controller_state {
 	u8 RightTrigger;
 
 	v2 LeftStickPos;
-	v2 RightStickPos; 
+	v2 RightStickPos;
+
+	// NOTE(ivan): Set this to non-zero to vibrate the controller.
+	// NOTE(ivan): After actual vibration these will be zeroed again.
+	u16 DoLeftVibration;
+	u16 DoRightVibration;
 };
 
 // NOTE(ivan): Steam controller state.
 struct steam_controller_state {
-	s32 Placeholder;
+	b32 IsConnected;
+
+	input_button_state Start;
+	input_button_state Select;
+	
+	input_button_state A;
+	input_button_state B;
+	input_button_state X;
+	input_button_state Y;
+
+	input_button_state Up;
+	input_button_state Down;
+	input_button_state Left;
+	input_button_state Right;
+	
+	input_button_state LeftBumper;
+	input_button_state RightBumper;
+
+	input_button_state LeftTrigger;
+	input_button_state RightTrigger;
+
+	v2 StickPos;
+};
+
+// NOTE(ivan): Mouse buttons.
+enum mouse_button {
+	MouseButton_Left = 0,
+	MouseButton_Middle = 1,
+	MouseButton_Right = 2,
+
+	MouseButton_X1 = 3,
+	MouseButton_X2 = 4,
+
+	MouseButton_MaxCount
 };
 
 // NOTE(ivan): Game input state for current frame.
 struct game_input {
 	input_button_state KbButtons[KeyCode_MaxCount];
-	input_button_state MouseButtons[5]; // NOTE(ivan): 0-left, 1-middle, 2-right, 3..4 - extra buttons.
+	input_button_state MouseButtons[MouseButton_MaxCount]; // NOTE(ivan): 0-left, 1-middle, 2-right, 3..4 - extra buttons.
 	point MousePos;
 	s32 MouseWheel; // NOTE(ivan): Number of scrolls per frame. Negative value says the wheel was rotated backward.
 
-	xbox_controller_state XboxControllers[4];
-	steam_controller_state SteamControllers[4];
+	xbox_controller_state XboxControllers[MAX_XBOX_CONTROLLERS_COUNT];
+	steam_controller_state SteamControllers[STEAM_CONTROLLER_MAX_COUNT];
 };
 
 // NOTE(ivan): Command callback function prototype.
@@ -102,19 +170,26 @@ struct command {
 	command *PrevCommand;
 };
 
-// NOTE(ivan): Command registry.
-struct commands_registry {
+// NOTE(ivan): Commands cache.
+struct command_cache {
 	command *TopCommand;
 	u32 NumCommands;
 
 	ticket_mutex Mutex; // NOTE(ivan): For synchronization.
 };
 
+void RegisterCommand(command_cache *Cache, const char *Name, command_callback *Callback);
+void UnregisterCommand(command_cache *Cache, const char *Name);
+void ExecCommand(command_cache *Cache, const char *Command, ...);
+
 // NOTE(ivan): Setting. A structure that links two strings that tells the name and value.
 // NOTE(ivan): Mustly used for working with game configuration settings.
 struct setting {
 	char Name[128];
 	char Value[128];
+
+	setting *NextSetting;
+	setting *PrevSetting;
 };
 
 // NOTE(ivan): Settings cache.
@@ -122,13 +197,19 @@ struct setting_cache {
 	setting *TopSetting;
 	u32 NumSettings;
 
-	ticket_mutex Mutex // NOTE(ivan): For synchronization.
+	ticket_mutex Mutex; // NOTE(ivan): For synchronization.
 };
+
+// NOTE(ivan): Settings load, save, and access.
+b32 LoadSettingsFromFile(setting_cache *Cache, const char *FileName);
+b32 SaveSettingsToFile(setting_cache *Cache, const char *FileName);
+const char * GetSetting(setting_cache *Cache, const char *Name);
 
 // NOTE(ivan): Game globals.
 extern struct game_state {
-	// NOTE(ivan): Game platform layer interface.
+	// NOTE(ivan): Game APIs access.
 	platform_api *PlatformAPI;
+	steamworks_api *SteamworksAPI;
 
 	// NOTE(ivan): Game data that gets exchanged between platform layer and game module each frame.
 	game_memory *GameMemory;
@@ -141,10 +222,10 @@ extern struct game_state {
 	memory_pool CommandsPool;    // NOTE(ivan): Special pool for commands registry.
 	memory_pool SettingsPool;    // NOTE(ivan): Special pool for settings cache.
 
-	// NOTE(ivan): Game primary commands registry and settings cache.
+	// NOTE(ivan): Game primary commands and settings caches.
 	// NOTE(ivan): Should not be more than once instance of these structure that are meant to be singletons.
-	commands_registry CommandsRegistry;
-	settings_cache SettingsCache;
+	command_cache CommandCache;
+	setting_cache SettingCache;
 } GameState;
 
 // NOTE(ivan): Game trigger type.
@@ -158,9 +239,10 @@ enum game_trigger_type {
 // NOTE(ivan): Beware that some of the parameters might be 0 depending on trigger type.
 #define GAME_TRIGGER(Name) void Name(game_trigger_type TriggerType, \
 									 platform_api *PlatformAPI,		\
+									 steamworks_api *SteamworksAPI, \
 									 game_memory *GameMemory,		\
 									 game_clocks *GameClocks,		\
-									 game_input *GameInput);
+									 game_input *GameInput)
 typedef GAME_TRIGGER(game_trigger);
 
 #endif // #ifndef GAME_H

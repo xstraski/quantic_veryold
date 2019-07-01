@@ -37,7 +37,7 @@ CreateMemoryStack(memory_stack *Stack, const char *Name, u32 SizePercentage) {
 		Result = SizeToPercentage(GameState.GameMemory->FreeStorage.Size,
 								  GameState.GameMemory->StorageTotalSize);
 	} else {
-		// TODO(ivan): Diagnostics.
+		GameState.PlatformAPI->Crashf("CreateMemoryStack[%s]: Out of memory!", Name);
 	}
 
 	LeaveTicketMutex(&Stack->Mutex);
@@ -66,18 +66,34 @@ AllocFromStack(memory_stack *Stack, uptr Size) {
 
 	EnterTicketMutex(&Stack->Mutex);
 	
-	uptr RealSize = Size = sizeof(uptr);
+	uptr RealSize = Size + sizeof(uptr);
 	if ((Stack->Mark + RealSize) < Stack->Piece.Size) {
 		*((uptr *)Stack->Piece.Base + Stack->Mark + Size) = Size;
 		Result = Stack->Piece.Base + Stack->Mark;
 		Stack->Mark += RealSize;
 
 		memset(Result, 0, Size);
+	} else {
+		GameState.PlatformAPI->Outf("AllocFromStack[%s]: Out of memory!", Stack->Name);
 	}
 
 	LeaveTicketMutex(&Stack->Mutex);
 
 	return Result;
+}
+
+void
+PopStack(memory_stack *Stack) {
+	Assert(Stack);
+
+	EnterTicketMutex(&Stack->Mutex);
+
+	uptr Size = *((uptr *)(Stack->Piece.Base + Stack->Mark + Size));
+	uptr RealSize = Size + sizeof(uptr);
+
+	Stack->Mark -= RealSize;
+
+	LeaveTicketMutex(&Stack->Mutex);
 }
 
 inline memory_pool_block *
@@ -93,13 +109,13 @@ GetBlockData(memory_pool_block *Block) {
 }
 
 inline memory_pool_block *
-GetDataBlock(u8 *Data) {
+GetDataBlock(void *Data) {
 	Assert(Data);
-	return (memory_pool_block *)(Data - sizeof(memory_pool_block));
+	return (memory_pool_block *)((u8 *)Data - sizeof(memory_pool_block));
 }
 
 u32
-CreateMemoryPool(memory_pool *Pool, const char *Name, u32 BlockSize, u32 SizePercentage) {
+CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePercentage) {
 	Assert(Pool);
 	Assert(Name);
 	Assert(BlockSize);
@@ -110,7 +126,7 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, u32 BlockSize, u32 SizePer
 	EnterTicketMutex(&Pool->Mutex);
 
 	uptr Size = PercentageToSize(SizePercentage, GameState.GameMemory->StorageTotalSize);
-	u32 BlocksInSize = Size \ BlockSize; u32 SizeWasted = Size % BlockSize;
+	u32 BlocksInSize = (u32)(Size / BlockSize); uptr SizeWasted = Size % BlockSize;
 	u32 BlocksToAlloc = BlocksInSize + (SizeWasted ? 1 : 0);
 	uptr SizeToAlloc = (sizeof(memory_pool_block) + BlockSize) * BlocksToAlloc;
 
@@ -136,7 +152,7 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, u32 BlockSize, u32 SizePer
 		Pool->NumAllocBlocks = 0;
 		Pool->NumFreeBlocks = Pool->MaxBlocks;
 	} else {
-		// TODO(ivan): Diagnostics.
+		GameState.PlatformAPI->Crashf("CreateMemoryPool[%s]: Out of memory!", Name);
 	}
 
 	LeaveTicketMutex(&Pool->Mutex);
@@ -186,6 +202,8 @@ AllocFromPool(memory_pool *Pool) {
 		Pool->NumAllocBlocks++;
 
 		memset(Result, 0, Pool->BlockSize);
+	} else {
+		GameState.PlatformAPI->Outf("AllocFromPool[%s]: Out of memory!", Pool->Name);
 	}
 	
 	LeaveTicketMutex(&Pool->Mutex);
@@ -210,7 +228,7 @@ FreeFromPool(memory_pool *Pool, void *Base) {
 		Pool->AllocBlocks = 0;
 
 	Pool->FreeBlocks->PrevBlock = Block;
-	Block->NextBlock = Pool->AllocBlock;
+	Block->NextBlock = Pool->AllocBlocks;
 	Block->PrevBlock = 0;
 	Pool->FreeBlocks = Block;
 	Pool->NumFreeBlocks++;

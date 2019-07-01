@@ -23,20 +23,19 @@
 // and deinitialization respectively. However, it is possible to *reset* the partition, which means complete partition
 // cleanup, zeroing included.
 
-// NOTE(ivan): Convertion from size to percentage value and vice versa.
 inline uptr
 PercentageToSize(u32 SizePercentage, uptr TotalSize) {
 	Assert(SizePercentage);
 	Assert(TotalSize);
 
-	return (uptr)(((f32)TotalSize / 100.0f) * SizePercentage);
+	return (uptr)(((f64)TotalSize / 100.0) * SizePercentage);
 }
-inline uptr
-SizeToPercentage(u32 Size, uptr TotalSize) {
+inline u32
+SizeToPercentage(uptr Size, uptr TotalSize) {
 	Assert(Size);
 	Assert(TotalSize);
 
-	return (u32)(((f32)Size / (f32)TotalSize) * 100.0f);
+	return (u32)(((f64)Size / (f64)TotalSize) * 100.0);
 }
 
 // NOTE(ivan): Single-sided memory stack.
@@ -85,7 +84,7 @@ struct memory_pool {
 // It might be larger that the caller expects, because memory pool allocates more space
 // if a given SizePercentage converted to a wanted size of bytes is too small for all blocks
 // with a given BlockSize.
-u32 CreateMemoryPool(memory_pool *Pool, const char *Name, u32 BlockSize, u32 SizePercentage);
+u32 CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePercentage);
 void ResetMemoryPool(memory_pool *Pool);
 
 void * AllocFromPool(memory_pool *Pool);

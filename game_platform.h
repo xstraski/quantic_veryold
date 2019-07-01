@@ -34,6 +34,17 @@
 #    define IsTargetCPU64Bit() true
 #endif
 
+#if INTERNAL
+#    define IsInternal() true
+#else
+#    define IsInternal() false
+#endif
+#if SLOWCODE
+#    define IsSlowCode() true
+#else
+#    define IsSlowCode() false
+#endif
+
 // NOTE(ivan): C standard includes.
 #include <stdio.h>
 #include <stdlib.h>
@@ -261,8 +272,7 @@ inline u8 * ConsumeSize(piece *Piece, uptr Size) {
 
 // NOTE(ivan): Endian-ness utilities.
 inline void
-SwapEndianU32(u32 *Value)
-{
+SwapEndianU32(u32 *Value) {
 	Assert(Value);
 
 #if MSVC
@@ -273,8 +283,7 @@ SwapEndianU32(u32 *Value)
 #endif	
 }
 inline void
-SwapEndianU16(u16 *Value)
-{
+SwapEndianU16(u16 *Value) {
 	Assert(Value);
 
 #if MSVC
@@ -340,12 +349,14 @@ LeaveTicketMutex(ticket_mutex *Mutex) {
 struct cpu_info {
 	b32 IsIntel;
 	b32 IsAMD;
-	
+
+	// NOTE(ivan): Identification strings.
 	char VendorName[13];
 	char BrandName[49];
 
 	f32 ClockSpeed; // NOTE(ivan): In GHz.
 
+	// NOTE(ivan): Features and instruction sets.
 	b32 SupportsMMX;
 	b32 SupportsMMXExt;
 	b32 Supports3DNow;
@@ -358,15 +369,37 @@ struct cpu_info {
 	b32 SupportsSSE4_2;
 	b32 SupportsSSE4A;
 	b32 SupportsHT;
-	
+
+	// NOTE(ivan): Cores information.
 	u32 NumCores;
 	u32 NumCoreThreads;
 
+	// NOTE(ivan): Cache information.
 	u32 NumL1;
 	u32 NumL2;
 	u32 NumL3;
 
 	u32 NumNUMA;
+};
+
+// NOTE(ivan): File handle.
+struct file_handle_platform;
+struct file_handle {
+	file_handle_platform *PlatformSpecific;
+	b32 IsValid;
+};
+
+// NOTE(ivan): File access type.
+enum file_access_type {
+    FileAccessType_OpenForReading = (1 << 0),
+	FileAccessType_OpenForWriting = (1 << 1)
+};	
+
+// NOTE(ivan): File seek origin.
+enum file_seek_origin {
+    FileSeekOrigin_Begin,
+	FileSeekOrigin_Current,
+	FileSeekOrigin_End
 };
 
 // NOTE(ivan): Platform-specific interface prototypes.
@@ -376,10 +409,45 @@ typedef PLATFORM_CHECK_PARAM(platform_check_param);
 #define PLATFORM_CHECK_PARAM_VALUE(Name) const char * Name(const char *Param)
 typedef PLATFORM_CHECK_PARAM_VALUE(platform_check_param_value);
 
+#define PLATFORM_OUTF(Name) void Name(const char *Format, ...)
+typedef PLATFORM_OUTF(platform_outf);
+
+#define PLATFORM_CRASHF(Name) void Name(const char *Format, ...)
+typedef PLATFORM_CRASHF(platform_crashf);
+
+#define PLATFORM_FOPEN(Name) file_handle Name(const char *FileName, file_access_type AccessType)
+typedef PLATFORM_FOPEN(platform_fopen);
+
+#define PLATFORM_FCLOSE(Name) void Name(file_handle *FileHandle)
+typedef PLATFORM_FCLOSE(platform_fclose);
+
+#define PLATFORM_FREAD(Name) u32 Name(file_handle *FileHandle, void *Buffer, u32 Size)
+typedef PLATFORM_FREAD(platform_fread);
+
+#define PLATFORM_FWRITE(Name) u32 Name(file_handle *FileHandle, void *Buffer, u32 Size)
+typedef PLATFORM_FWRITE(platform_fwrite);
+
+#define PLATFORM_FSEEK(Name) b32 Name(file_handle *FileHandle, uptr Size, file_seek_origin SeekOrigin, uptr *Pos)
+typedef PLATFORM_FSEEK(platform_fseek);
+
+#define PLATFORM_FFLUSH(Name) void Name(file_handle *FileHandle)
+typedef PLATFORM_FFLUSH(platform_fflush);
+
 // NOTE(ivan): Platform-specific interface.
 struct platform_api {
+	// NOTE(ivan): Generic-purpose methods.
 	platform_check_param *CheckParam; // NOTE(ivan): Returns NOTFOUND in case a given parameter is missing.
 	platform_check_param_value *CheckParamValue;
+	platform_outf *Outf;
+	platform_crashf *Crashf;
+
+	// NOTE(ivan): File I/O.
+	platform_fopen *FOpen;
+	platform_fclose *FClose;
+	platform_fread *FRead;
+	platform_fwrite *FWrite;
+	platform_fseek *FSeek;
+	platform_fflush *FFlush;
 
 	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop.
 
@@ -393,9 +461,10 @@ struct platform_api {
 	// game entities module is "quantic_ents", and game editor module is "quantic_ed".
 	const char *SharedName;
 
-	// NOTE(ivan): CWD - current working directory.
+	// NOTE(ivan): Current working directory.
 	const char *CurrentPath;
 
+	// NOTE(ivan): CPU information.
 	cpu_info CPUInfo;
 };
 
