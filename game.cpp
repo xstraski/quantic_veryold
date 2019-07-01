@@ -72,15 +72,59 @@ GetSetting(setting_cache *Cache, const char *Name) {
 	return 0;
 }
 
-static void
-OutCPUInfo(void) {}
+inline void
+OutMemoryStackStats(memory_stack *Stack) {
+	Assert(Stack);
+	
+	const f64 Mb = (f64)(1024 * 1024);
+	GameState.PlatformAPI->Outf("[%s] : eated %f Mb, used %f Mb, free %f Mb."
+								Stack->Name,
+								(f64)Stack->Piece.Size / Mb,
+								(f64)Stack->Mark / Mb,
+								(f64)(Stack->Piece.Size - Stack->Mark) / Mb);
+}
+
+inline void
+OutMemoryPoolStats(memory_pool *Pool) {
+	Assert(Pool);
+	
+	const f64 Mb = (f64)(1024 * 1024);
+	GameState.PlatformAPI->Outf("[%s] : eated %f Mb, blocksize %f Mb, alloc %d blocks, free %d blocks.",
+								Pool->Name,
+								(f64)((Pool->BlockSize + sizeof(memory_pool_block)) * Pool->MaxBlocks) / Mb,
+								(f64)Pool->BlockSize / Mb,
+								Pool->NumAllocBlocks,
+								Pool->NumFreeBlocks);
+}
 
 static void
-OutRAMInfo(void) {}
+OutMemoryTableStats(void) {
+	const f64 Mb = (f64)(1024 * 1024);
+	
+	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
+	
+	OutMemoryStackStats(&GameState.PerFrameStack);
+	OutMemoryStackStats(&GameState.PermanentStack);
+	
+	OutMemoryPoolStats(&GameState.CommandsPool);
+	OutMemoryPoolStats(&GameState.SettingsPool);
+	
+	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
+	
+	GameState.PlatformAPI->Outf("* Game primary storage total size: %f Mb.",
+								(f64)GameState.GameMemory->StorageTotalSize / Mb);
+	GameState.PlatformAPI->Outf("* Game primary stroage left space size: %f Mb",
+								(f64)GameState.GameMemory->FreeStorage.Size / Mb);
+	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
+	
+}
 
 static void
-SteamWarningMessageHook(int SeverityLevel, const char *Text) {
-	GameState.PlatformAPI->Outf("[Steam][%s] %s", SeverityLevel == 0 ? "msg" : "wrn", Text);
+SteamWarningMessageHook(int SeverityLevel, const char *Message) {
+	if (SeverityLevel == 0)
+		GameState.PlatformAPI->Outf("[Steam] %s", Message);
+	else
+		GameState.PlatformAPI->Outf("[Steam-warning] %s", Message);
 }
 
 extern "C" GAME_TRIGGER(GameTrigger) {
@@ -99,6 +143,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		GameState.GameInput = GameInput;
 
 		// NOTE(ivan): Initialize Steamworks.
+		GameState.PlatformAPI->Outf("Initializing Steamworks...");
 		if (GameState.SteamworksAPI->Init()) {
 			GainAccessToSteamworksInterfaces(GameState.SteamworksAPI);
 			
@@ -111,6 +156,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 				// NOTE(ivan): Check whether the user has logged into Steam.
 				if (GameState.SteamworksAPI->User->BLoggedOn()) {
 					// NOTE(ivan): Organize memory partitions.
+					Win32.PlatformAPI->Outf("Partitioning game primary storage...");
 					u32 FreeStoragePercent = 100;
 					FreeStoragePercent = CreateMemoryStack(&GameState.PerFrameStack, "PerFrameStack",
 														   Percentage(10, FreeStoragePercent));
@@ -120,6 +166,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 														  Percentage(10, FreeStoragePercent));
 					FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
 														  Percentage(10, FreeStoragePercent));
+					OutMemoryTableStats();
 
 					// NOTE(ivan): Register commands.
 					RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
@@ -130,10 +177,6 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 					// NOTE(ivan): Load settings.
 					LoadSettingsFromFile(&GameState.SettingCache, "default.set");
 					LoadSettingsFromFile(&GameState.SettingCache, "user.set");
-
-					// NOTE(ivan): Out generic host information.
-					OutCPUInfo();
-					OutRAMInfo();
 				} else {
 					// NOTE(ivan): User must be logged into Steam.
 					GameState.PlatformAPI->Crashf(GAMENAME " requires user to be logged into Steam!");

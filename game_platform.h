@@ -107,6 +107,21 @@ Max(T A, T B) {
 	return A > B ? A : B;
 }
 
+template <typename T> inline T
+Min3(T A, T B, T C) {
+	return Min(Min(A, B), C);
+}
+template <typename T> inline T
+Max3(T A, T B, T C) {
+	return Max(Max(A, B), C);
+}
+
+// NOTE(ivan): Clamp.
+template <typename T> inline T
+Clamp(T MinValue, T MaxValue, T Value) {
+	return Value < MinValue ? MinValue : Value > MaxValue ? MaxValue : Value;
+}
+
 // NOTE(ivan): Swaps data.
 template <typename T> inline void
 Swap(T *A, T *B) {
@@ -383,11 +398,7 @@ struct cpu_info {
 };
 
 // NOTE(ivan): File handle.
-struct file_handle_platform;
-struct file_handle {
-	file_handle_platform *PlatformSpecific;
-	b32 IsValid;
-};
+typedef s32 file_handle; // NOTE(ivan): In case of fail file_handle-returning functions returns NOTFOUND.
 
 // NOTE(ivan): File access type.
 enum file_access_type {
@@ -418,19 +429,19 @@ typedef PLATFORM_CRASHF(platform_crashf);
 #define PLATFORM_FOPEN(Name) file_handle Name(const char *FileName, file_access_type AccessType)
 typedef PLATFORM_FOPEN(platform_fopen);
 
-#define PLATFORM_FCLOSE(Name) void Name(file_handle *FileHandle)
+#define PLATFORM_FCLOSE(Name) void Name(file_handle FileHandle)
 typedef PLATFORM_FCLOSE(platform_fclose);
 
-#define PLATFORM_FREAD(Name) u32 Name(file_handle *FileHandle, void *Buffer, u32 Size)
+#define PLATFORM_FREAD(Name) u32 Name(file_handle FileHandle, void *Buffer, u32 Size)
 typedef PLATFORM_FREAD(platform_fread);
 
-#define PLATFORM_FWRITE(Name) u32 Name(file_handle *FileHandle, void *Buffer, u32 Size)
+#define PLATFORM_FWRITE(Name) u32 Name(file_handle FileHandle, void *Buffer, u32 Size)
 typedef PLATFORM_FWRITE(platform_fwrite);
 
-#define PLATFORM_FSEEK(Name) b32 Name(file_handle *FileHandle, uptr Size, file_seek_origin SeekOrigin, uptr *Pos)
+#define PLATFORM_FSEEK(Name) b32 Name(file_handle FileHandle, uptr Size, file_seek_origin SeekOrigin, uptr *Pos)
 typedef PLATFORM_FSEEK(platform_fseek);
 
-#define PLATFORM_FFLUSH(Name) void Name(file_handle *FileHandle)
+#define PLATFORM_FFLUSH(Name) void Name(file_handle FileHandle)
 typedef PLATFORM_FFLUSH(platform_fflush);
 
 // NOTE(ivan): Platform-specific interface.
@@ -441,7 +452,7 @@ struct platform_api {
 	platform_outf *Outf;
 	platform_crashf *Crashf;
 
-	// NOTE(ivan): File I/O.
+	// NOTE(ivan): File I/O methods.
 	platform_fopen *FOpen;
 	platform_fclose *FClose;
 	platform_fread *FRead;
@@ -449,12 +460,12 @@ struct platform_api {
 	platform_fseek *FSeek;
 	platform_fflush *FFlush;
 
-	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop.
+	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop at the end of current frame.
 
-	// NOTE(ivan): Executable's file name, base name (file name without extension) and file path.
-	const char *ExecutableName;
-	const char *ExecutableNameNoExt;
-	const char *ExecutablePath;
+	// NOTE(ivan): Executable's file name in various forms.
+	const char *ExecutableName;      // NOTE(ivan): File name with extension.
+	const char *ExecutableNameNoExt; // NOTE(ivan): File name without extension.
+	const char *ExecutablePath;      // NOTE(ivan): File path without name.
 
 	// NOTE(ivan): "Shared name": all game modules contains this shared piece of name.
 	// F.e: if the shared name is "quantic", then the executable is "runquantic", game core module is "quantic",

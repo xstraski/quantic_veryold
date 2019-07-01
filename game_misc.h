@@ -11,6 +11,6 @@ void FreeTokenizedString(memory_stack *Stack, u32 NumTokens);
 piece ReadEntireFile(memory_stack *Stack, const char *FileName); // NOTE(ivan): Should be released by PopStack().
 b32 WriteEntireFile(const char *FileName, void *Buffer, uptr Size);
 uptr GetFileSizeByName(const char *FileName);
-uptr GetFileSizeByHandle(file_handle *FileHandle);
+uptr GetFileSizeByHandle(file_handle FileHandle);
 
 #endif // #ifndef GAME_MISC_H

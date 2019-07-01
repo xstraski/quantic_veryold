@@ -89,11 +89,11 @@ ReadEntireFile(memory_stack *Stack, const char *FileName) {
 	piece Result = {};
 
 	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForReading);
-	if (FileHandle.IsValid) {
+	if (FileHandle != NOTFOUND) {
 		Result.Size = SafeTruncateU64(GetFileSizeByHandle(&FileHandle));
 		Result.Base = AllocFromStack(Stack, Result.Size);
 		if (Result.Base) {
-			if (GameState.PlatformAPI->FRead(&FileHandle, Result.Base, Result.Size) == Result.Size) {
+			if (GameState.PlatformAPI->FRead(FileHandle, Result.Base, Result.Size) == Result.Size) {
 				// NOTE(ivan): Success.
 			} else {
 				PopStack(Stack);
@@ -101,7 +101,7 @@ ReadEntireFile(memory_stack *Stack, const char *FileName) {
 			}
 		}
 		
-		GameState.PlatformAPI->FClose(&FileHandle);
+		GameState.PlatformAPI->FClose(FileHandle);
 	}
 	
 	return Result;
@@ -116,11 +116,11 @@ WriteEntireFile(const char *FileName, void *Buffer, uptr Size) {
 	b32 Result = false;
 
 	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForWriting);
-	if (FileHandle.IsValid) {
-		if (GameState.PlatformAPI->FWrite(&FileHandle, Buffer, Size) == Result.Size)
+	if (FileHandle != NOTFOUND) {
+		if (GameState.PlatformAPI->FWrite(FileHandle, Buffer, Size) == Result.Size)
 			Result = true;
 		
-		GameState.PlatformAPI->FClose(&FileHandle);
+		GameState.PlatformAPI->FClose(FileHandle);
 	}
 
 	return Result;
@@ -133,17 +133,17 @@ GetFileSizeByName(const char *FileName) {
 	uptr Result = 0;
 	
 	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForReading);
-	if (FileHandle.IsValid) {
-		Result = GetFileSizeByHandle(&FileHandle);
+	if (FileHandle != NOTFOUND) {
+		Result = GetFileSizeByHandle(FileHandle);
 
-		GameState.PlatformAPI->FClose(&FileHandle);
+		GameState.PlatformAPI->FClose(FileHandle);
 	}
 
 	return Result;
 }
 
 uptr
-GetFileSizeByHandle(file_handle *FileHandle) {
+GetFileSizeByHandle(file_handle FileHandle) {
 	Assert(FileHandle);
 
 	uptr Result = 0;
