@@ -67,13 +67,12 @@ struct memory_pool_block {
 struct memory_pool {
 	char Name[128];
 
-	u8 *Base;
+	piece Piece;
 	memory_pool_block *AllocBlocks; // NOTE(ivan): Linked list of all allocated blocks.
 	memory_pool_block *FreeBlocks;  // NOTE(ivan): Linked list of all free blocks.
 	u32 NumAllocBlocks;
 	u32 NumFreeBlocks;
 
-	uptr Size;
 	uptr BlockSize;
 	u32 MaxBlocks;
 
@@ -89,5 +88,33 @@ void ResetMemoryPool(memory_pool *Pool);
 
 void * AllocFromPool(memory_pool *Pool);
 void FreeFromPool(memory_pool *Pool, void *Base);
+
+// NOTE(ivan): Memory heap block.
+struct memory_heap_block {
+	memory_heap_block *NextBlock;
+	memory_heap_block *PrevBlock;
+
+	uptr Size;;
+	b32 IsFree;
+};
+
+// NOTE(ivan): Memory heap.
+struct memory_heap {
+	char Name[128];
+	
+	piece Piece;
+	memory_heap_block *Blocks;
+	u32 NumBlocks;
+
+	ticket_mutex Mutex;
+};
+
+// NOTE(ivan): CreateMemoryHeap() returns percentage of left free space of game primary storage.
+// It never eats more memory than the caller defined in SizePercentage.
+u32 CreateMemoryHeap(memory_heap *Heap, const char *Name, u32 SizePercentage);
+void ResetMemoryHeap(memory_heap *Heap);
+
+void * AllocFromHeap(memory_heap *Heap, uptr Size);
+void FreeFromHeap(memory_heap *Heap, void *Base);
 
 #endif // #ifndef GAME_MEMORY_H

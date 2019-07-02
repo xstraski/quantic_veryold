@@ -58,16 +58,55 @@ PushSetting(setting_cache *Cache, const char *Name, const char *Value) {
 
 b32
 LoadSettingsFromFile(setting_cache *Cache, const char *FileName) {
-	UnusedParam(Cache);
-	UnusedParam(FileName);
+	Assert(Cache);
+	Assert(FileName);
+
+	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForReading);
+	if (FileHandle != NOTFOUND) {
+		char LineBuffer[1024] = {};
+		while (GetLineFromFile(FileHandle, LineBuffer, ArraySize(LineBuffer) - 1)) {
+			u32 NumTokens;
+			char **Tokens = TokenizeString(&GameState.PerFrameHeap, LineBuffer, &NumTokens, " \t");
+			if (Tokens) {
+				if (NumTokens >= 2) {
+					PushSetting(Cache, Tokens[0], Tokens[1]);
+				}
+
+				FreeTokenizedString(&GameState.PerFrameHeap, Tokens, NumTokens);
+			}
+
+		}
+		
+		GameState.PlatformAPI->FClose(FileHandle);
+	}
 	
 	return false;
 }
 
 b32
 SaveSettingsToFile(setting_cache *Cache, const char *FileName) {
-	UnusedParam(Cache);
-	UnusedParam(FileName);
+	Assert(Cache);
+	Assert(FileName);
+
+	b32 Result = false;
+
+	EnterTicketMutex(&Cache->Mutex);
+
+	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForWriting);
+	if (FileHandle != NOTFOUND) {
+		Result = true;
+		
+		for (setting *Setting = Cache->TopSetting; Setting; Setting = Setting->PrevSetting) {
+			char String[1024] = {};
+			u32 StringLength = snprintf(String, ArraySize(String) - 1, "%s %s", Setting->Name, Setting->Value);
+
+			GameState.PlatformAPI->FWrite(FileHandle, String, StringLength);
+		}
+
+		GameState.PlatformAPI->FClose(FileHandle);
+	}
+
+	LeaveTicketMutex(&Cache->Mutex);
 	
 	return false;
 }
@@ -76,6 +115,19 @@ const char *
 GetSetting(setting_cache *Cache, const char *Name) {
 	UnusedParam(Cache);
 	UnusedParam(Name);
+
+	const char *Result = 0;
+
+	EnterTicketMutex(&Cache->Mutex);
+
+	for (setting *Setting = Cache->TopSetting; Setting; Setting = Setting->PrevSetting) {
+		if (strcmp(Setting->Name, Name) == 0) {
+			Result = Setting->Value;
+			break;
+		}
+	}
+
+	LeaveTicketMutex(&Cache->Mutex);
 	
 	return 0;
 }
@@ -105,13 +157,18 @@ OutMemoryPoolStats(memory_pool *Pool) {
 								Pool->NumFreeBlocks);
 }
 
+inline void
+OutMemoryHeapStats(memory_heap *Heap) {
+	UnusedParam(Heap);
+}
+
 static void
 OutMemoryTableStats(void) {
 	const f64 Mb = (f64)(1024 * 1024);
 	
 	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
 	
-	OutMemoryStackStats(&GameState.PerFrameStack);
+	OutMemoryHeapStats(&GameState.PerFrameHeap);
 	OutMemoryStackStats(&GameState.PermanentStack);
 	
 	OutMemoryPoolStats(&GameState.CommandsPool);
@@ -129,10 +186,22 @@ OutMemoryTableStats(void) {
 
 static b32
 CommandQuit(char **Params, u32 NumParams) {
+	if (NumParams >= 2) {
+		s32 QuitCode = atoi(Params[1]);
+		QuitGame(QuitCode);
+	} else {
+		QuitGame(0);
+	}
+
+	return true;
+}
+
+static b32
+CommandRestart(char **Params, u32 NumParams) {
 	UnusedParam(Params);
 	UnusedParam(NumParams);
-	
-	GameState.PlatformAPI->QuitRequested = true;
+
+	RestartGame();
 	return true;
 }
 
@@ -148,6 +217,10 @@ CommandCauseAV(char **Params, u32 NumParams) {
 #endif // #if INTERNAL
 
 extern "C" GAME_TRIGGER(GameTrigger) {
+	// NOTE(ivan): Various game-specific file names.
+	static const char GameDefaultSettingsFileName[] = "default.set";
+	static const char GameUserSettingsFileName[] = "user.set";
+	
 	switch (TriggerType) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 		// NOTE(ivan): Game initialization.
@@ -162,27 +235,30 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		GameState.GameInput = GameInput;
 
 		// NOTE(ivan): Organize memory partitions.
+		// TODO(ivan): Calibrate memory partitions sizes to make them
+		// as adequate as possible.
 		GameState.PlatformAPI->Outf("Partitioning game primary storage...");
 		u32 FreeStoragePercent = 100;
-		FreeStoragePercent = CreateMemoryStack(&GameState.PerFrameStack, "PerFrameStack",
-											   Percentage(10, FreeStoragePercent));
+		FreeStoragePercent = CreateMemoryHeap(&GameState.PerFrameHeap, "PerFrameHeap",
+											  Percentage(10, FreeStoragePercent));
 		FreeStoragePercent = CreateMemoryStack(&GameState.PermanentStack, "PermanentStack",
-											   Percentage(30, FreeStoragePercent));
+											   Percentage(10, FreeStoragePercent));
 		FreeStoragePercent = CreateMemoryPool(&GameState.CommandsPool, "CommandsPool",
 											  sizeof(command), Percentage(10, FreeStoragePercent));
 		FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
 											  sizeof(setting), Percentage(10, FreeStoragePercent));
 		OutMemoryTableStats();
 
-		// NOTE(ivan): Register commands.
+		// NOTE(ivan): Register base commands.
 		RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
+		RegisterCommand(&GameState.CommandCache, "restart", CommandRestart);
 		if (IsInternal()) {
 			RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
 		}
 
 		// NOTE(ivan): Load settings.
-		LoadSettingsFromFile(&GameState.SettingCache, "default.set");
-		LoadSettingsFromFile(&GameState.SettingCache, "user.set");
+		LoadSettingsFromFile(&GameState.SettingCache, GameDefaultSettingsFileName);
+		LoadSettingsFromFile(&GameState.SettingCache, GameUserSettingsFileName);
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -190,16 +266,16 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 	case GameTriggerType_Release: {
 		// NOTE(ivan): Save settings.
-		SaveSettingsToFile(&GameState.SettingCache, "user.set");
+		SaveSettingsToFile(&GameState.SettingCache, GameUserSettingsFileName);
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 		// NOTE(ivan): Game frame update.
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 	case GameTriggerType_Frame: {
-		// NOTE(ivan): Clear per-frame stack.
-		ResetMemoryStack(&GameState.PerFrameStack);
-
+		// NOTE(ivan): Clean up per-frame heap.
+		ResetMemoryHeap(&GameState.PerFrameHeap);
+		
 #if INTERNAL		
 		// NOTE(ivan): Restart if requested.
 		if (GameState.GameInput->KbButtons[KeyCode_F1].IsDown)

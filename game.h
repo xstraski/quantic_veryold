@@ -201,7 +201,7 @@ extern struct game_state {
 	game_input *GameInput;
 	
 	// NOTE(ivan): Game memory partitions.
-	memory_stack PerFrameStack;  // NOTE(ivan): Contains temporary data for one frame, gets cleaned at each new frame.
+	memory_heap PerFrameHeap;    // NOTE(ivan): Contains temporary data for one frame, gets cleaned at each new frame.
 	memory_stack PermanentStack; // NOTE(ivan): Contains data that will stay online till the program complete shutdown.
 	memory_pool CommandsPool;    // NOTE(ivan): Special pool for commands registry.
 	memory_pool SettingsPool;    // NOTE(ivan): Special pool for settings cache.

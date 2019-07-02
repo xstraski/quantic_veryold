@@ -1,8 +1,8 @@
 #include "game_misc.h"
 
 char **
-TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const char *Delims) {
-	Assert(Stack);
+TokenizeString(memory_heap *Heap, const char *String, u32 *NumTokens, const char *Delims) {
+	Assert(Heap);
 	Assert(String);
 	Assert(NumTokens);
 	Assert(Delims);
@@ -32,7 +32,7 @@ TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const ch
 		return 0;
 
 	// NOTE(ivan): Allocate needed space.
-	char **Result = (char **)AllocFromStack(Stack, sizeof(char *) * (*NumTokens));
+	char **Result = (char **)AllocFromHeap(Heap, sizeof(char *) * (*NumTokens));
 	if (Result) {
 		// NOTE(ivan): Iterate all over again to capture tokens.
 		u32 It = 0;
@@ -44,7 +44,7 @@ TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const ch
 				if (!WasDelim) {
 					u32 Diff = (u32)(Ptr - Last);
 
-					Result[It] = (char *)AllocFromStack(Stack, sizeof(char) * (Diff + 1));
+					Result[It] = (char *)AllocFromHeap(Heap, sizeof(char) * (Diff + 1));
 					if (Result[It]) {
 						strncpy(Result[It], Last, Diff);
 						Result[It][Diff] = 0;
@@ -53,8 +53,9 @@ TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const ch
 						It++;
 					} else {
 						for (u32 Index = 0; Index < It; Index++)
-							PopStack(Stack);
-						PopStack(Stack);
+							FreeFromHeap(Heap, Result[Index]);
+						FreeFromHeap(Heap, Result);
+						break;
 					}
 				}
 
@@ -72,13 +73,14 @@ TokenizeString(memory_stack *Stack, const char *String, u32 *NumTokens, const ch
 }
 
 void
-FreeTokenizedString(memory_stack *Stack, u32 NumTokens) {
-	Assert(Stack);
+FreeTokenizedString(memory_heap *Heap, char **Tokens, u32 NumTokens) {
+	Assert(Heap);
+	Assert(Tokens);
 	Assert(NumTokens);
 
 	for (u32 Index = 0; Index < NumTokens; Index++)
-		PopStack(Stack);
-	PopStack(Stack);
+		FreeFromHeap(Heap, Tokens[Index]);
+	FreeFromHeap(Heap, Tokens);
 }
 
 piece

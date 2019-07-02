@@ -68,9 +68,6 @@ call clean.bat
 rem -----------------------------------
 rem Prepare dependenncies.
 rem -----------------------------------
-rem Steamworks:
-if "%1"=="x86" copy deps\steamworks\redistributable_bin\steam_api.dll build\steam_api.dll > NUL 2> NUL
-if "%1"=="x64" copy deps\steamworks\redistributable_bin\win64\steam_api64.dll build\steam_api64.dll > NUL 2> NUL
 
 rem -----------------------------------
 rem Build main executable.
