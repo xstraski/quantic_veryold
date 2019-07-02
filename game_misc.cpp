@@ -131,7 +131,7 @@ WriteEntireFile(const char *FileName, void *Buffer, uptr Size) {
 uptr
 GetFileSizeByName(const char *FileName) {
 	Assert(FileName);
-
+	
 	uptr Result = 0;
 	
 	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForReading);
@@ -146,7 +146,7 @@ GetFileSizeByName(const char *FileName) {
 
 uptr
 GetFileSizeByHandle(file_handle FileHandle) {
-	Assert(FileHandle);
+	Assert(FileHandle != NOTFOUND);
 
 	uptr Result = 0;
 	uptr PrevPos = 0;
@@ -158,4 +158,40 @@ GetFileSizeByHandle(file_handle FileHandle) {
 	}
 
 	return Result;
+}
+
+u32
+GetLineFromFile(file_handle FileHandle, char *Buffer, u32 BufferSize) {
+	Assert(FileHandle != NOTFOUND);
+
+	char C;
+	u32 Total = 0;
+	while (true) {
+		if (GameState.PlatformAPI->FRead(FileHandle, &C, sizeof(char))) {
+			if (C == 0)
+				break; // NOTE(ivan): Eof.
+			if (Total == (BufferSize - 1))
+				break; // NOTE(ivan): End of destination space.
+			if (C == '\n')
+				break; // NOTE(ivan): New line reached.
+
+			Buffer[Total] = C;
+			Total++;
+		} else {
+			break;
+		}
+	}
+
+	if (Total) {
+		// NOTE(ivan): Remove '\r' symbol if CRLF.
+		if (Buffer[Total - 1] == '\r') {
+			Buffer[Total] = 0;
+			Total--;
+		}
+	}
+
+	// NOTE(ivan): Add null terminator.
+	Buffer[Total] = 0;
+	
+	return Total;
 }

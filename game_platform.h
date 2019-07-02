@@ -438,7 +438,7 @@ typedef PLATFORM_FREAD(platform_fread);
 #define PLATFORM_FWRITE(Name) u32 Name(file_handle FileHandle, void *Buffer, u32 Size)
 typedef PLATFORM_FWRITE(platform_fwrite);
 
-#define PLATFORM_FSEEK(Name) b32 Name(file_handle FileHandle, uptr Size, file_seek_origin SeekOrigin, uptr *Pos)
+#define PLATFORM_FSEEK(Name) b32 Name(file_handle FileHandle, uptr Size, file_seek_origin SeekOrigin, uptr *NewPos)
 typedef PLATFORM_FSEEK(platform_fseek);
 
 #define PLATFORM_FFLUSH(Name) void Name(file_handle FileHandle)
@@ -460,8 +460,11 @@ struct platform_api {
 	platform_fseek *FSeek;
 	platform_fflush *FFlush;
 
+	// NOTE(ivan): Quit flags (corresponding functions QuitGame() and RestartGame() are located in game.h header file).
 	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop at the end of current frame.
 	s32 QuitReturnCode;
+
+	b32 QuitToRestart; // NOTE(ivan): Set to true to start again the program after quit.
 
 	// NOTE(ivan): Executable's file name in various forms.
 	const char *ExecutableName;      // NOTE(ivan): File name with extension.

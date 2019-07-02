@@ -83,7 +83,7 @@ rem 'comctl32.lib'					- for Microsoft Common Controls.
 rem 'winmm.lib'						- for mmsystem.h interface, timeBeginPeriod()/timeEndPeriod().
 rem 'opengl32.lib'					- for OpenGL Compatibility-Profile interface.
 pushd build
-cl -Ferun%OutputName%.exe -Fmrun%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game_platform_win32.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! user32.lib gdi32.lib ole32.lib comctl32.lib winmm.lib -pdb:run%OutputName%.pdb
+cl -Ferun%OutputName%.exe -Fmrun%OutputName%.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game_platform_win32.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! user32.lib gdi32.lib ole32.lib comctl32.lib winmm.lib shlwapi.lib -pdb:run%OutputName%.pdb
 set BuildResult=%errorlevel%
 popd
 if not %BuildResult%==0 goto ErrorBuildFailed

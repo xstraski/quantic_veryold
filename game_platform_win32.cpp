@@ -65,6 +65,7 @@
 #include <commctrl.h>
 #include <versionhelpers.h>
 #include <mmsystem.h>
+#include <shlwapi.h>
 
 // NOTE(ivan): Win32 XInput includes.
 #include <xinput.h>
@@ -93,6 +94,15 @@ struct win32_game_module {
 	game_trigger *GameTrigger;
 };
 
+// NOTE(ivan): Win32 files maximum count.
+#define MAX_WIN32_FILES_COUNT 256
+
+// NOTE(ivan): Win32 file.
+struct win32_file {
+	b32 IsOpened; // NOTE(ivan): Whether the handle is already opened or not.
+	HANDLE OSHandle;
+};
+
 // NOTE(ivan): Win32 globals.
 static struct {
 	HINSTANCE Instance;
@@ -110,6 +120,10 @@ static struct {
 
 	// NOTE(ivan): Game input, needs to be global to be accessed by Win32WindowProc()'s raw input routines.
 	game_input *GameInput;
+
+	// NOTE(ivan): Reserved file handles.
+	win32_file Files[MAX_WIN32_FILES_COUNT];
+	ticket_mutex FilesMutex;
 } Win32State;
 
 // NOTE(ivan): Win32-specific system structure for setting thread name by Win32SetThreadName.
@@ -203,25 +217,102 @@ static PLATFORM_CRASHF(Win32Crashf) {
 	ExitProcess(0);
 }
 
+static s32
+Win32GetFreeFileIndex(void) {
+	s32 Result = NOTFOUND;
+	
+	EnterTicketMutex(&Win32State.FilesMutex);
+
+	s32 Index;
+	for (Index = 0; Index < (s32)ArraySize(Win32State.Files); Index++) {
+		if (!Win32State.Files[Index].IsOpened) {
+			Win32State.Files[Index].IsOpened = true;
+			Result = Index;
+			break;
+		}
+	}
+
+	LeaveTicketMutex(&Win32State.FilesMutex);
+
+	if (Index == NOTFOUND)
+		Win32Crashf("Out of file handles!");
+
+	return Index;
+}
+
+inline win32_file *
+Win32GetFile(s32 FileIndex) {
+	Assert(FileIndex < (s32)ArraySize(Win32State.Files));
+
+	EnterTicketMutex(&Win32State.FilesMutex);	
+	win32_file *Result = &Win32State.Files[FileIndex];
+	LeaveTicketMutex(&Win32State.FilesMutex);
+
+	return Result;
+}
+
+inline void
+Win32FreeFileIndex(s32 FileIndex) {
+	EnterTicketMutex(&Win32State.FilesMutex);
+	
+	Win32GetFile(FileIndex)->IsOpened = false;
+	
+	LeaveTicketMutex(&Win32State.FilesMutex);
+}
+
 static PLATFORM_FOPEN(Win32FOpen) {
 	Assert(FileName);
-	UnusedParam(AccessType);
+	Assert(AccessType);
 
 	file_handle Result = NOTFOUND;
+
+	// NOTE(ivan): Get free file handle.
+	s32 FileIndex = Win32GetFreeFileIndex();
+	win32_file *File = Win32GetFile(FileIndex);
+
+	// NOTE(ivan): Prepare open flags.
+	DWORD FileAccess = 0;
+	DWORD FileShareMode = 0;
+	DWORD FileCreation = 0;
+	DWORD FileAttribs = 0;
+	if (AccessType | FileAccessType_OpenForReading) {
+		FileAccess |= GENERIC_READ;
+		FileShareMode |= FILE_SHARE_READ;
+		FileCreation |= OPEN_EXISTING;
+	} else if (AccessType | FileAccessType_OpenForWriting) {
+		FileAccess |= GENERIC_WRITE;
+		FileShareMode |= FILE_SHARE_READ;
+		FileCreation |= CREATE_ALWAYS;
+		FileAttribs |= FILE_ATTRIBUTE_NORMAL;
+	}
+
+	// NOTE(ivan): Open/create file.
+	File->OSHandle = CreateFileA(FileName, FileAccess, FileShareMode, 0, FileCreation, FileAttribs, 0);
+	if (File->OSHandle != INVALID_HANDLE_VALUE)
+		Result = (file_handle)FileIndex;
 
 	return Result;
 }
 
 static PLATFORM_FCLOSE(Win32FClose) {
-	UnusedParam(FileHandle);
+	Assert(FileHandle != NOTFOUND);
+	
+	CloseHandle(Win32GetFile(FileHandle)->OSHandle);
+	Win32FreeFileIndex(FileHandle);
 }
 
 static PLATFORM_FREAD(Win32FRead) {
-	UnusedParam(FileHandle);
+	Assert(FileHandle != NOTFOUND);
 	Assert(Buffer);
 	Assert(Size);
 
 	u32 Result = 0;
+
+	win32_file *File = Win32GetFile(FileHandle);
+
+	DWORD BytesRead = 0;
+	if (ReadFile(File->OSHandle, Buffer, Size, &BytesRead, 0))
+		Result = BytesRead;
 
 	return Result;
 }
@@ -233,22 +324,54 @@ static PLATFORM_FWRITE(Win32FWrite) {
 
 	u32 Result = 0;
 
+	win32_file *File = Win32GetFile(FileHandle);
+
+	DWORD BytesWritten = 0;
+	if (WriteFile(File->OSHandle, Buffer, Size, &BytesWritten, 0))
+		Result = BytesWritten;
+
 	return Result;
 }
 
 static PLATFORM_FSEEK(Win32FSeek) {
-	UnusedParam(FileHandle);
-	UnusedParam(Size);
-	UnusedParam(SeekOrigin);
-	UnusedParam(Pos);
+	Assert(FileHandle);
+	Assert(Size);
+	Assert(SeekOrigin);
+	Assert(NewPos);
 
 	b32 Result = false;
 
+	win32_file *File = Win32GetFile(FileHandle);
+
+	LARGE_INTEGER DistanceToMove;
+	LARGE_INTEGER NewFilePointer;
+	DWORD MoveMethod;
+
+	DistanceToMove.QuadPart = Size;
+
+	switch (SeekOrigin) {
+	default:
+	case FileSeekOrigin_Begin:   MoveMethod = FILE_BEGIN;   break;
+	case FileSeekOrigin_Current: MoveMethod = FILE_CURRENT; break;
+	case FileSeekOrigin_End:     MoveMethod = FILE_END;     break;
+	};
+
+	if (SetFilePointerEx(File->OSHandle, DistanceToMove, &NewFilePointer, MoveMethod)) {
+		Result = true;
+
+#if X32CPU	
+		*NewPos = NewFilePointer.LowPart;
+#elif X64CPU
+		*NewPos = NewFilePointer.QuadPart;
+#endif
+	}
+	
 	return Result;
 }
 
 static PLATFORM_FFLUSH(Win32FFlush) {
-	UnusedParam(FileHandle);
+	Assert(FileHandle);
+	FlushFileBuffers(Win32GetFile(FileHandle)->OSHandle);
 }
 
 static cpu_info
@@ -925,6 +1048,11 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 	Win32API.FSeek = Win32FSeek;
 	Win32API.FFlush = Win32FFlush;
 
+	// NOTE(ivan): Various Win32-specific strings declaration.
+	const char GameWindowClassName[] = (GAMENAME "Window");
+	const char GameExistsMutexName[] = (GAMENAME "Exists");
+	const char GameRestartMutexName[] = (GAMENAME "Restarts");
+
 	// NOTE(ivan): Check whether the host OS is not obsolete.
 	if (IsWindows7OrGreater()) {
 		// NOTE(ivan): Check debugger presence.
@@ -988,308 +1116,328 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 		Win32API.SharedName = SharedName;
 
-		// NOTE(ivan): Set current working directory if necessary.
-		const char *ParamCwd = Win32CheckParamValue("-cwd");
-		if (ParamCwd)
-			SetCurrentDirectoryA(ParamCwd);
+		// NOTE(ivan): If restarting, wait until the previous instance of the program dies.
+		HANDLE RestartMutex = CreateMutexA(0, FALSE, GameRestartMutexName);
+		if (GetLastError() == ERROR_ALREADY_EXISTS) {
+			WaitForSingleObject(RestartMutex, INFINITE);
+			ReleaseMutex(RestartMutex);
+		}
+		CloseHandle(RestartMutex);
 
-		// NOTE(ivan): Create game primary storage.
-		GameMemory.FreeStorage.Size = Win32CalculateDesirableUsableMemorySize();
-		GameMemory.FreeStorage.Base = (u8 *)VirtualAlloc(0, GameMemory.FreeStorage.Size, MEM_COMMIT, PAGE_READWRITE);
-		if (GameMemory.FreeStorage.Base) {
-			GameMemory.StorageTotalSize = GameMemory.FreeStorage.Size;
+		// NOTE(ivan): Check whether the program is already running.
+		HANDLE ExistsMutex = CreateMutexA(0, FALSE, GameExistsMutexName);
+		if (GetLastError() != ERROR_ALREADY_EXISTS) {
+			// NOTE(ivan): Set current working directory if necessary.
+			const char *ParamCwd = Win32CheckParamValue("-cwd");
+			if (ParamCwd)
+				SetCurrentDirectoryA(ParamCwd);
 
-			// NOTE(ivan): Create main window.
-			WNDCLASSA WindowClass = {};
-			WindowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
-			WindowClass.lpszClassName = (GAMENAME "Window");
-			WindowClass.lpfnWndProc = Win32WindowProc;
-			WindowClass.hInstance = Win32State.Instance;
+			// NOTE(ivan): Create game primary storage.
+			GameMemory.FreeStorage.Size = Win32CalculateDesirableUsableMemorySize();
+			GameMemory.FreeStorage.Base = (u8 *)VirtualAlloc(0, GameMemory.FreeStorage.Size, MEM_COMMIT, PAGE_READWRITE);
+			if (GameMemory.FreeStorage.Base) {
+				GameMemory.StorageTotalSize = GameMemory.FreeStorage.Size;
 
-			if (RegisterClassA(&WindowClass)) {
-				HWND Window = CreateWindowExA(WS_EX_APPWINDOW,
-											  WindowClass.lpszClassName,
-											  GAMENAME,
-											  WS_OVERLAPPEDWINDOW,
-											  CW_USEDEFAULT, CW_USEDEFAULT,
-											  CW_USEDEFAULT, CW_USEDEFAULT,
-											  0, 0, Win32State.Instance, 0);
-				if (Window) {
-					HDC WindowDC = GetDC(Window); // NOTE(ivan): CS_OWNDC indicates that a window has single non-shared DC.
+				// NOTE(ivan): Create main window.
+				WNDCLASSA WindowClass = {};
+				WindowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+				WindowClass.lpszClassName = GameWindowClassName;
+				WindowClass.lpfnWndProc = Win32WindowProc;
+				WindowClass.hInstance = Win32State.Instance;
 
-					// NOTE(ivan): Obtain monitor refresh rate.
-					// TODO(ivan): Should it be updated each new frame to handle monitor settings change while
-					// the program is running?
-					s32 DisplayFrequency = GetDeviceCaps(WindowDC, VREFRESH);
-					if (DisplayFrequency < 2)
-						DisplayFrequency = 60; // TODO(ivan): Find a more appropriate way to obtain display frequency.
+				if (RegisterClassA(&WindowClass)) {
+					HWND Window = CreateWindowExA(WS_EX_APPWINDOW,
+												  WindowClass.lpszClassName,
+												  GAMENAME,
+												  WS_OVERLAPPEDWINDOW,
+												  CW_USEDEFAULT, CW_USEDEFAULT,
+												  CW_USEDEFAULT, CW_USEDEFAULT,
+												  0, 0, Win32State.Instance, 0);
+					if (Window) {
+						HDC WindowDC = GetDC(Window); // NOTE(ivan): CS_OWNDC indicates that a window
+						                              // has single non-shared device context.
 
-					// NOTE(ivan): Target seconds to last per one frame.
-					f32 GameTargetFramerate = (1.0f / DisplayFrequency);
+						// NOTE(ivan): Obtain monitor refresh rate.
+						// TODO(ivan): Should it be updated each new frame to handle monitor settings change while
+						// the program is running?
+						s32 DisplayFrequency = GetDeviceCaps(WindowDC, VREFRESH);
+						if (DisplayFrequency < 2)
+							DisplayFrequency = 60; // TODO(ivan): Find a more appropriate way to obtain display frequency.
 
-					// NOTE(ivan): Initialize raw keyboard and mouse input.
-					RAWINPUTDEVICE RawDevices[2] = {};
+						// NOTE(ivan): Target seconds to last per one frame.
+						f32 GameTargetFramerate = (1.0f / DisplayFrequency);
 
-					RawDevices[0].usUsagePage = 0x01;
-					RawDevices[0].usUsage = 0x06;
-					RawDevices[0].dwFlags = 0;
-					RawDevices[0].hwndTarget = Window;
+						// NOTE(ivan): Initialize raw keyboard and mouse input.
+						RAWINPUTDEVICE RawDevices[2] = {};
 
-					RawDevices[1].usUsagePage = 0x01;
-					RawDevices[1].usUsage = 0x02;
-					RawDevices[1].dwFlags = 0;
-					RawDevices[1].hwndTarget = Window;
+						RawDevices[0].usUsagePage = 0x01;
+						RawDevices[0].usUsage = 0x06;
+						RawDevices[0].dwFlags = 0;
+						RawDevices[0].hwndTarget = Window;
 
-					RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
+						RawDevices[1].usUsagePage = 0x01;
+						RawDevices[1].usUsage = 0x02;
+						RawDevices[1].dwFlags = 0;
+						RawDevices[1].hwndTarget = Window;
 
-					// NOTE(ivan): Connect to XInput for processing Xbox controller(s) input.
-					win32_xinput_module XInputModule = Win32LoadXInputModule();
+						RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
 
-					// NOTE(ivan): Connect to game module.
-					win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
-					if (GameModule.IsValid) {
-						GameModule.GameTrigger(GameTriggerType_Prepare,
-											   &Win32API,
-											   &GameMemory,
-											   &GameClocks,
-											   &GameInput);
+						// NOTE(ivan): Connect to XInput for processing Xbox controller(s) input.
+						win32_xinput_module XInputModule = Win32LoadXInputModule();
 
-						// NOTE(ivan): When all initialization is done, present the window.
-						ShowWindow(Window, ShowCommand);
-						SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
+						// NOTE(ivan): Connect to game module.
+						win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
+						if (GameModule.IsValid) {
+							GameModule.GameTrigger(GameTriggerType_Prepare,
+												   &Win32API,
+												   &GameMemory,
+												   &GameClocks,
+												   &GameInput);
 
-						// NOTE(ivan): Prepare game clocks and timings.
-						u64 LastCPUClockCounter = __rdtsc();
-						u64 LastCycleCounter = Win32GetClock();
+							// NOTE(ivan): When all initialization is done, present the window.
+							ShowWindow(Window, ShowCommand);
+							SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
 
-						// NOTE(ivan): Primary loop.
-						b32 IsGameRunning = true;
-						while (IsGameRunning) {
-							// NOTE(ivan): Process OS messages.
-							static MSG Msg;
-							while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
-								if (Msg.message == WM_QUIT)
-									IsGameRunning = false;
+							// NOTE(ivan): Prepare game clocks and timings.
+							u64 LastCPUClockCounter = __rdtsc();
+							u64 LastCycleCounter = Win32GetClock();
 
-								TranslateMessage(&Msg);
-								DispatchMessageA(&Msg);
-							}
+							// NOTE(ivan): Primary loop.
+							b32 IsGameRunning = true;
+							while (IsGameRunning) {
+								// NOTE(ivan): Process OS messages.
+								static MSG Msg;
+								while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
+									if (Msg.message == WM_QUIT)
+										IsGameRunning = false;
+
+									TranslateMessage(&Msg);
+									DispatchMessageA(&Msg);
+								}
 								
-							// NOTE(ivan): Do these routines only in case the main window is in focus.
-							if (Win32State.IsWindowActive) {
-								// NOTE(ivan): Process Xbox controllers state.
-								static DWORD MaxXboxControllers = Min((u32)XUSER_MAX_COUNT,
-																	  ArraySize(GameInput.XboxControllers));
-								for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-									xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
-									XINPUT_STATE XboxControllerState;
-									if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
-										XboxController->IsConnected = true;
+								// NOTE(ivan): Do these routines only in case the main window is in focus.
+								if (Win32State.IsWindowActive) {
+									// NOTE(ivan): Process Xbox controllers state.
+									static DWORD MaxXboxControllers = Min((u32)XUSER_MAX_COUNT,
+																		  ArraySize(GameInput.XboxControllers));
+									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+										XINPUT_STATE XboxControllerState;
+										if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
+											XboxController->IsConnected = true;
 
-										// TODO(ivan): See if XboxControllerState.dwPacketNumber
-										// increments too rapidly.
-										static DWORD PrevXboxPacketNumber = 0;
-										if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
-											PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
+											// TODO(ivan): See if XboxControllerState.dwPacketNumber
+											// increments too rapidly.
+											static DWORD PrevXboxPacketNumber = 0;
+											if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
+												PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
 										
-											XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
+												XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
 
-											// NOTE(ivan): Process buttons.
-											Win32ProcessXInputDigitalButton(&XboxController->Start,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_START);
-											Win32ProcessXInputDigitalButton(&XboxController->Back,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_BACK);
+												// NOTE(ivan): Process buttons.
+												Win32ProcessXInputDigitalButton(&XboxController->Start,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_START);
+												Win32ProcessXInputDigitalButton(&XboxController->Back,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_BACK);
 
-											Win32ProcessXInputDigitalButton(&XboxController->A,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_A);
-											Win32ProcessXInputDigitalButton(&XboxController->B,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_B);
-											Win32ProcessXInputDigitalButton(&XboxController->X,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_X);
-											Win32ProcessXInputDigitalButton(&XboxController->Y,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_Y);
+												Win32ProcessXInputDigitalButton(&XboxController->A,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_A);
+												Win32ProcessXInputDigitalButton(&XboxController->B,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_B);
+												Win32ProcessXInputDigitalButton(&XboxController->X,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_X);
+												Win32ProcessXInputDigitalButton(&XboxController->Y,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_Y);
 
-											Win32ProcessXInputDigitalButton(&XboxController->DPad.Up,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_DPAD_UP);
-											Win32ProcessXInputDigitalButton(&XboxController->DPad.Down,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_DPAD_DOWN);
-											Win32ProcessXInputDigitalButton(&XboxController->DPad.Left,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_DPAD_LEFT);
-											Win32ProcessXInputDigitalButton(&XboxController->DPad.Right,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_DPAD_RIGHT);
+												Win32ProcessXInputDigitalButton(&XboxController->DPad.Up,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_DPAD_UP);
+												Win32ProcessXInputDigitalButton(&XboxController->DPad.Down,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_DPAD_DOWN);
+												Win32ProcessXInputDigitalButton(&XboxController->DPad.Left,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_DPAD_LEFT);
+												Win32ProcessXInputDigitalButton(&XboxController->DPad.Right,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_DPAD_RIGHT);
 
-											Win32ProcessXInputDigitalButton(&XboxController->LeftStick.Button,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_LEFT_THUMB);
-											Win32ProcessXInputDigitalButton(&XboxController->RightStick.Button,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_RIGHT_THUMB);
+												Win32ProcessXInputDigitalButton(&XboxController->LeftStick.Button,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_LEFT_THUMB);
+												Win32ProcessXInputDigitalButton(&XboxController->RightStick.Button,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_RIGHT_THUMB);
 
-											// NOTE(ivan): Process bumpers.
-											Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_LEFT_SHOULDER);
-											Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
-																			XboxGamepad->wButtons,
-																			XINPUT_GAMEPAD_RIGHT_SHOULDER);
+												// NOTE(ivan): Process bumpers.
+												Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_LEFT_SHOULDER);
+												Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
+																				XboxGamepad->wButtons,
+																				XINPUT_GAMEPAD_RIGHT_SHOULDER);
 
-											// NOTE(ivan): Process triggers.
-											XboxController->LeftTrigger = XboxGamepad->bLeftTrigger;
-											XboxController->RightTrigger = XboxGamepad->bRightTrigger;
+												// NOTE(ivan): Process triggers.
+												XboxController->LeftTrigger = XboxGamepad->bLeftTrigger;
+												XboxController->RightTrigger = XboxGamepad->bRightTrigger;
 
-											// NOTE(ivan): Process sticks positions.
-											XboxController->LeftStick.Pos.X =
-												Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
-																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-											XboxController->LeftStick.Pos.Y =
-												Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
-																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+												// NOTE(ivan): Process sticks positions.
+												XboxController->LeftStick.Pos.X =
+													Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
+																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+												XboxController->LeftStick.Pos.Y =
+													Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
+																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
 
-											XboxController->RightStick.Pos.X =
-												Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
-																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-											XboxController->RightStick.Pos.Y =
-												Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
-																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+												XboxController->RightStick.Pos.X =
+													Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
+																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+												XboxController->RightStick.Pos.Y =
+													Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
+																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+											}
+
+											// NOTE(ivan): Vibrate if requested (on previous frame).
+											if (XboxController->DoVibration.LeftMotorSpeed ||
+												XboxController->DoVibration.RightMotorSpeed) {
+												XINPUT_VIBRATION XboxControllerVibration;
+												XboxControllerVibration.wLeftMotorSpeed
+													= XboxController->DoVibration.LeftMotorSpeed;
+												XboxControllerVibration.wRightMotorSpeed
+													= XboxController->DoVibration.RightMotorSpeed;
+
+												XInputModule.SetState(Index, &XboxControllerVibration);
+
+												XboxController->DoVibration.LeftMotorSpeed = 0;
+												XboxController->DoVibration.RightMotorSpeed = 0;
+											}
+										} else {
+											XboxController->IsConnected = false;
 										}
-
-										// NOTE(ivan): Vibrate if requested (on previous frame).
-										if (XboxController->DoVibration.LeftMotorSpeed ||
-											XboxController->DoVibration.RightMotorSpeed) {
-											XINPUT_VIBRATION XboxControllerVibration;
-											XboxControllerVibration.wLeftMotorSpeed
-												= XboxController->DoVibration.LeftMotorSpeed;
-											XboxControllerVibration.wRightMotorSpeed
-												= XboxController->DoVibration.RightMotorSpeed;
-
-											XInputModule.SetState(Index, &XboxControllerVibration);
-
-											XboxController->DoVibration.LeftMotorSpeed = 0;
-											XboxController->DoVibration.RightMotorSpeed = 0;
-										}
-									} else {
-										XboxController->IsConnected = false;
 									}
-								}
 									
-								// NOTE(ivan): Process Win32-specific input events.
-								if (GameInput.KbButtons[KeyCode_F4].IsDown &&
-									(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
-									 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
-									IsGameRunning = false;
+									// NOTE(ivan): Process Win32-specific input events.
+									if (GameInput.KbButtons[KeyCode_F4].IsDown &&
+										(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
+										 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
+										IsGameRunning = false;
 
-								if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
-									Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
+									if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
+										Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
 
-								// NOTE(ivan): Update game frame.
-								GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0);
+									// NOTE(ivan): Update game frame.
+									GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0);
 
-								// NOTE(ivan): Before the next frame, make all input events obsolete.
-								for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
-									GameInput.KbButtons[Index].IsNew = false;
+									// NOTE(ivan): Before the next frame, make all input events obsolete.
+									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
+										GameInput.KbButtons[Index].IsNew = false;
 
-								for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
-									GameInput.MouseButtons[Index].IsNew = false;
+									for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
+										GameInput.MouseButtons[Index].IsNew = false;
 
-								for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-									xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
 
-									XboxController->Start.IsNew = false;
-									XboxController->Back.IsNew = false;
+										XboxController->Start.IsNew = false;
+										XboxController->Back.IsNew = false;
 
-									XboxController->A.IsNew = false;
-									XboxController->B.IsNew = false;
-									XboxController->X.IsNew = false;
-									XboxController->Y.IsNew = false;
+										XboxController->A.IsNew = false;
+										XboxController->B.IsNew = false;
+										XboxController->X.IsNew = false;
+										XboxController->Y.IsNew = false;
 
-									XboxController->DPad.Up.IsNew = false;
-									XboxController->DPad.Down.IsNew = false;
-									XboxController->DPad.Left.IsNew = false;
-									XboxController->DPad.Right.IsNew = false;
+										XboxController->DPad.Up.IsNew = false;
+										XboxController->DPad.Down.IsNew = false;
+										XboxController->DPad.Left.IsNew = false;
+										XboxController->DPad.Right.IsNew = false;
 
-									XboxController->LeftBumper.IsNew = false;
-									XboxController->RightBumper.IsNew = false;
+										XboxController->LeftBumper.IsNew = false;
+										XboxController->RightBumper.IsNew = false;
 
-									XboxController->LeftStick.Button.IsNew = false;
-									XboxController->RightStick.Button.IsNew = false;
-								}
-
-								// NOTE(ivan): Escape primary loop if quit has been requested.
-								IsGameRunning = !Win32API.QuitRequested;
-
-								// NOTE(ivan): Finalize timings and synchronize framerate.
-								u64 EndCycleCounter = Win32GetClock();
-								f32 CycleSecondsElapsed =
-									Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
-										
-								if (CycleSecondsElapsed < GameTargetFramerate) {
-									while (CycleSecondsElapsed < GameTargetFramerate) {
-										if (IsSleepGranular) {
-											DWORD SleepMS
-												= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
-											if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
-												Sleep(SleepMS);
-										}
-
-										CycleSecondsElapsed
-											= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+										XboxController->LeftStick.Button.IsNew = false;
+										XboxController->RightStick.Button.IsNew = false;
 									}
+
+									// NOTE(ivan): Escape primary loop if quit has been requested.
+									IsGameRunning = !Win32API.QuitRequested;
+
+									// NOTE(ivan): Finalize timings and synchronize framerate.
+									u64 EndCycleCounter = Win32GetClock();
+									f32 CycleSecondsElapsed =
+										Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
+										
+									if (CycleSecondsElapsed < GameTargetFramerate) {
+										while (CycleSecondsElapsed < GameTargetFramerate) {
+											if (IsSleepGranular) {
+												DWORD SleepMS
+													= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
+												if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
+													Sleep(SleepMS);
+											}
+
+											CycleSecondsElapsed
+												= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+										}
+									}
+									GameClocks.SecondsPerFrame = CycleSecondsElapsed;
+
+									u64 EndCPUClockCounter = __rdtsc();
+									GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
+
+									EndCycleCounter = Win32GetClock();
+									GameClocks.FramesPerSecond =
+										(f32)((f64)Win32State.PerformanceFrequency
+											  / (EndCycleCounter - LastCycleCounter));
+
+									LastCPUClockCounter = __rdtsc();
+									LastCycleCounter = EndCycleCounter;
 								}
-								GameClocks.SecondsPerFrame = CycleSecondsElapsed;
-
-								u64 EndCPUClockCounter = __rdtsc();
-								GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
-
-								EndCycleCounter = Win32GetClock();
-								GameClocks.FramesPerSecond =
-									(f32)((f64)Win32State.PerformanceFrequency
-										  / (EndCycleCounter - LastCycleCounter));
-
-								LastCPUClockCounter = __rdtsc();
-								LastCycleCounter = EndCycleCounter;
 							}
+
+							// NOTE(ivan): Release game and its module.
+							GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0);
+							FreeLibrary(GameModule.GameLibrary);
+						} else {
+							// NOTE(ivan): Game module cannot be loaded.
+							Win32Crashf(GAMENAME " cannot load game DLL!");
 						}
 
-						// NOTE(ivan): Release game and its module.
-						GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0);
-						FreeLibrary(GameModule.GameLibrary);
+						FreeLibrary(XInputModule.XInputLibrary);
+
+						RawDevices[0].dwFlags = RIDEV_REMOVE;
+						RawDevices[1].dwFlags = RIDEV_REMOVE;
+						RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
+
+						ReleaseDC(Window, WindowDC);
 					} else {
-						// NOTE(ivan): Game module cannot be loaded.
-						Win32Crashf(GAMENAME " cannot load game DLL!");
+						// NOTE(ivan): Game window cannot be created.
+						Win32Crashf(GAMENAME " window cannot be created!");
 					}
 
-					FreeLibrary(XInputModule.XInputLibrary);
-
-					RawDevices[0].dwFlags = RIDEV_REMOVE;
-					RawDevices[1].dwFlags = RIDEV_REMOVE;
-					RegisterRawInputDevices(RawDevices, 2, sizeof(RAWINPUTDEVICE));
-
-					ReleaseDC(Window, WindowDC);
+					DestroyWindow(Window);
 				} else {
-					// NOTE(ivan): Game window cannot be created.
-					Win32Crashf(GAMENAME " window cannot be created!");
+					// NOTE(ivan): Game window class cannot be registered.
+					Win32Crashf(GAMENAME " window class cannot be registered!");
 				}
 
-				DestroyWindow(Window);
+				VirtualFree(GameMemory.FreeStorage.Base, 0, MEM_RELEASE);
 			} else {
-				// NOTE(ivan): Game window class cannot be registered.
-				Win32Crashf(GAMENAME " window class cannot be registered!");
+				// NOTE(ivan): Game primary storage cannot be allocated.
+				Win32Crashf(GAMENAME " primary storage cannnot be allocated!");
 			}
 
-			VirtualFree(GameMemory.FreeStorage.Base, 0, MEM_RELEASE);
+			// NOTE(ivan): No longer needs to be set.
+			ReleaseMutex(ExistsMutex);
+			CloseHandle(ExistsMutex);
 		} else {
-			// NOTE(ivan): Game primary storage cannot be allocated.
-			Win32Crashf(GAMENAME " primary storage cannnot be allocated!");
+			// NOTE(ivan): Game is already running.
+			Win32Crashf(GAMENAME " instance is already running!");
 		}
 
 		CoUninitialize();
@@ -1298,5 +1446,28 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 		Win32Crashf(GAMENAME " requires Windows 7 or newer OS!");
 	}
 
+	// NOTE(ivan): Start itself before quitting so the program restarts if requested.
+	if (Win32API.QuitToRestart) {
+		HANDLE RestartMutex = CreateMutexA(0, FALSE, GameRestartMutexName);
+		if (GetLastError() == ERROR_ALREADY_EXISTS) {
+			WaitForSingleObject(RestartMutex, INFINITE);
+			ReleaseMutex(RestartMutex);
+			CloseHandle(RestartMutex);
+		} else {
+			char ModuleName[2048] = {};
+			GetModuleFileNameA(Win32State.Instance, ModuleName, ArraySize(ModuleName) - 1);
+			PathQuoteSpacesA(ModuleName);
+			
+			STARTUPINFO StartupInfo = {};
+			PROCESS_INFORMATION ProcessInfo = {};
+			if (CreateProcessA(0, ModuleName, 0, 0, FALSE, 0, 0, 0, &StartupInfo, &ProcessInfo)) {
+				// NOTE(ivan): Success.
+			} else {
+				CloseHandle(RestartMutex);
+			}
+		}
+	}
+
+	// NOTE(ivan): Goodbye world.
 	return Win32API.QuitReturnCode;
 }

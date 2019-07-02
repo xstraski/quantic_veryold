@@ -199,6 +199,12 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 	case GameTriggerType_Frame: {
 		// NOTE(ivan): Clear per-frame stack.
 		ResetMemoryStack(&GameState.PerFrameStack);
+
+#if INTERNAL		
+		// NOTE(ivan): Restart if requested.
+		if (GameState.GameInput->KbButtons[KeyCode_F1].IsDown)
+			RestartGame();
+#endif		
 	} break;
 	}
 }
