@@ -1284,8 +1284,13 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 																				XINPUT_GAMEPAD_RIGHT_SHOULDER);
 
 												// NOTE(ivan): Process triggers.
-												XboxController->LeftTrigger = XboxGamepad->bLeftTrigger;
-												XboxController->RightTrigger = XboxGamepad->bRightTrigger;
+												Win32SetInputButtonState(&XboxController->LeftTrigger.Button,
+																		 XboxGamepad->bLeftTrigger == 255);
+												Win32SetInputButtonState(&XboxController->RightTrigger.Button,
+																		 XboxGamepad->bRightTrigger == 255);
+												
+												XboxController->LeftTrigger.PullValue = XboxGamepad->bLeftTrigger;
+												XboxController->RightTrigger.PullValue = XboxGamepad->bRightTrigger;
 
 												// NOTE(ivan): Process sticks positions.
 												XboxController->LeftStick.Pos.X =

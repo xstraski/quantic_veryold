@@ -63,12 +63,21 @@ struct controller_dpad_buttons_state {
 	input_button_state Right;
 };
 
-// NOTE(ivan): Generic controller state.
+// NOTE(ivan): Generic controller stick state.
 struct controller_stick_state {
 	// NOTE(ivan): Stick position.
 	v2 Pos;
 
 	// NOTE(ivan): Stick as a button.
+	input_button_state Button;
+};
+
+// NOTE(ivan): Generic controller trigger state.
+struct controller_trigger_state {
+	// NOTE(ivan): Pull value.
+	u8 PullValue;
+
+	// NOTE(ivan): IsDown when PullValue reachs its maximum.
 	input_button_state Button;
 };
 
@@ -100,8 +109,8 @@ struct xbox_controller_state {
 	input_button_state LeftBumper;
 	input_button_state RightBumper;
 
-	u8 LeftTrigger;
-	u8 RightTrigger;
+	controller_trigger_state LeftTrigger;
+	controller_trigger_state RightTrigger;
 
 	controller_stick_state LeftStick;
 	controller_stick_state RightStick;
