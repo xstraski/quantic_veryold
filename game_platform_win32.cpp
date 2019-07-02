@@ -85,14 +85,6 @@ struct win32_xinput_module {
 	x_input_set_state *SetState;
 };
 
-// NOTE(ivan): Win32-specific Steamworks module structure.
-struct win32_steamworks_module {
-	b32 IsValid; // NOTE(ivan): False if something went wrong and the XInput module is not loaded.
-	HMODULE SteamLibrary;
-	
-	steamworks_api SteamworksAPI;
-};
-
 // NOTE(ivan): Win32-specific game module structure.
 struct win32_game_module {
 	b32 IsValid; // NOTE(ivan): False if something went wrong and the game module is not loaded. 
@@ -428,11 +420,14 @@ Win32LoadXInputModule(void) {
 		Result.XInputLibrary = LoadLibraryA("xinput1_3.dll");
 	}
 	if (Result.XInputLibrary) {
+		// NOTE(ivan): We target to the oldest available XInput library version 1.3
+		// so the program can run on at least Windows 7 without any additional DX-redistributables installation.
+		// The functions XInputGetState() and XInputSetState() are guaranteed to be there.
 		Result.GetState = (x_input_get_state *)GetProcAddress(Result.XInputLibrary, "XInputGetState");
 		Result.SetState = (x_input_set_state *)GetProcAddress(Result.XInputLibrary, "XInputSetState");
 
 		if (Result.GetState && Result.SetState) {
-			Result.IsValid = true;
+			Result.IsValid = true; // NOTE(ivan): Success.
 			Win32Outf("...success.");
 		}
 	} else {
@@ -441,7 +436,9 @@ Win32LoadXInputModule(void) {
 
 	if (!Result.IsValid) {
 		Win32Outf("...fail, entries not found, using stubs!");
-		
+
+		// NOTE(ivan): In case of load fail, use these dummies that always return ERROR_DEVICE_NOT_CONNECTED,
+		// so the program will behave like there are no Xbox controllers plugged in the machine at all.
 		Result.GetState = Win32XInputGetStateStub;
 		Result.SetState = Win32XInputSetStateStub;
 	}
@@ -476,33 +473,6 @@ Win32ProcessXInputStickValue(SHORT Value, SHORT DeadZoneThreshold) {
 		Result = (f32)((Value - DeadZoneThreshold) / (32767.0f - DeadZoneThreshold));
 
 	return Result;
-}
-
-inline b32
-Win32ContainsSteamActionOrigin(EControllerActionOrigin *ActionOrigins, u32 NumActionOrigins,
-							   EControllerActionOrigin OriginWeSeek) {
-	Assert(ActionOrigins);
-
-	b32 Result = false;
-	for (u32 Index = 0; Index < NumActionOrigins; Index++) {
-		if (ActionOrigins[Index] == OriginWeSeek) {
-			Result = true;
-			break;
-		}
-	}
-
-	return Result;
-}
-
-inline void
-Win32ProcessSteamDigitalButton(input_button_state *Button,
-							   EControllerActionOrigin *ActionOrigins, u32 NumActionOrigins,
-							   EControllerActionOrigin OriginWeSeek) {
-	Assert(Button);
-	Assert(ActionOrigins);
-
-	b32 IsDown = Win32ContainsSteamActionOrigin(ActionOrigins, NumActionOrigins, OriginWeSeek);
-	Win32SetInputButtonState(Button, IsDown);
 }
 
 static b32
@@ -779,63 +749,6 @@ Win32LoadGameModule(const char *SharedName) {
 	return Result;
 }
 
-inline win32_steamworks_module
-Win32LoadSteamworksModule(void) {
-	win32_steamworks_module Result = {};
-	
-	const char *SteamLibraryName;
-	if (IsTargetCPU32Bit())
-		SteamLibraryName = "steam_api.dll";
-	else if (IsTargetCPU64Bit())
-		SteamLibraryName = "steam_api64.dll";
-
-	Win32Outf("Loading Steamworks module %s...", SteamLibraryName);
-	Result.SteamLibrary = LoadLibraryA(SteamLibraryName);
-	if (Result.SteamLibrary) {
-		Result.SteamworksAPI.Init = (steam_api_init *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Init");
-		Result.SteamworksAPI.Shutdown = (steam_api_shutdown *)GetProcAddress(Result.SteamLibrary, "SteamAPI_Shutdown");
-		Result.SteamworksAPI.IsSteamRunning
-			= (steam_api_is_steam_running *)GetProcAddress(Result.SteamLibrary, "SteamAPI_IsSteamRunning");
-		Result.SteamworksAPI.RestartAppIfNecessary
-			= (steam_api_restart_app_if_necessary *)GetProcAddress(Result.SteamLibrary, "SteamAPI_RestartAppIfNecessary");
-		Result.SteamworksAPI.GetHSteamUser
-			= (steam_api_get_hsteam_user *)GetProcAddress(Result.SteamLibrary, "SteamAPI_GetHSteamUser");
-		Result.SteamworksAPI.GameServerGetHSteamUser
-			= (steam_game_server_get_hsteam_user *)GetProcAddress(Result.SteamLibrary, "SteamGameServer_GetHSteamUser");
-		
-		Result.SteamworksAPI._ContextInit
-			= (steam_internal_context_init *)GetProcAddress(Result.SteamLibrary, "SteamInternal_ContextInit");
-		Result.SteamworksAPI._CreateInterface
-			= (steam_internal_create_interface *)GetProcAddress(Result.SteamLibrary, "SteamInternal_CreateInterface");
-		Result.SteamworksAPI._FindOrCreateUserInterface
-			= (steam_internal_find_or_create_user_interface *)GetProcAddress(Result.SteamLibrary,
-																			 "SteamInternal_FindOrCreateUserInterface");
-		Result.SteamworksAPI._FindOrCreateGameServerInterface
-			= (steam_internal_find_or_create_game_server_interface *)GetProcAddress(Result.SteamLibrary,
-																					"SteamInternal_FindOrCreateGameServerInterface");
-
-		if (Result.SteamworksAPI.Init &&
-			Result.SteamworksAPI.Shutdown &&
-			Result.SteamworksAPI.IsSteamRunning &&
-			Result.SteamworksAPI.RestartAppIfNecessary &&
-			Result.SteamworksAPI.GetHSteamUser &&
-			Result.SteamworksAPI.GameServerGetHSteamUser &&
-			Result.SteamworksAPI._ContextInit &&
-			Result.SteamworksAPI._CreateInterface &&
-			Result.SteamworksAPI._FindOrCreateUserInterface &&
-			Result.SteamworksAPI._FindOrCreateGameServerInterface) {
-			Result.IsValid = true;
-			Win32Outf("...success.");
-		} else {
-			Win32Outf("...fail, entries not found!");
-		}
-	} else {
-		Win32Outf("...fail, file not found!");
-	}
-
-	return Result;
-}
-
 static uptr
 Win32CalculateDesirableUsableMemorySize(void) {
 	uptr Result;
@@ -1071,14 +984,14 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 
 		// NOTE(ivan): Obtain game "shared name".
 		char SharedName[1024] = {};
-		strncpy(SharedName, ExecNameNoExt + 3, ArraySize(SharedName) - 1);
+		strncpy(SharedName, ExecNameNoExt + 3, ArraySize(SharedName) - 1); // NOTE(ivan): Remove "run" from the name.
 
 		Win32API.SharedName = SharedName;
 
 		// NOTE(ivan): Set current working directory if necessary.
-		const char *ParamCWD = Win32CheckParamValue("-cwd");
-		if (ParamCWD)
-			SetCurrentDirectoryA(ParamCWD);
+		const char *ParamCwd = Win32CheckParamValue("-cwd");
+		if (ParamCwd)
+			SetCurrentDirectoryA(ParamCwd);
 
 		// NOTE(ivan): Create game primary storage.
 		GameMemory.FreeStorage.Size = Win32CalculateDesirableUsableMemorySize();
@@ -1132,62 +1045,53 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 					// NOTE(ivan): Connect to XInput for processing Xbox controller(s) input.
 					win32_xinput_module XInputModule = Win32LoadXInputModule();
 
-					// NOTE(ivan): Connect to Steamworks.
-					win32_steamworks_module SteamworksModule = Win32LoadSteamworksModule();
-					if (SteamworksModule.IsValid) {
-						steamworks_api &SteamworksAPI = SteamworksModule.SteamworksAPI;
-						
-						// NOTE(ivan): Connect to game module.
-						win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
-						if (GameModule.IsValid) {
-							GameModule.GameTrigger(GameTriggerType_Prepare,
-												   &Win32API,
-												   &SteamworksAPI,
-												   &GameMemory,
-												   &GameClocks,
-												   &GameInput);
+					// NOTE(ivan): Connect to game module.
+					win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
+					if (GameModule.IsValid) {
+						GameModule.GameTrigger(GameTriggerType_Prepare,
+											   &Win32API,
+											   &GameMemory,
+											   &GameClocks,
+											   &GameInput);
 
-							// NOTE(ivan): Initialize early needed Steamworks interfaces.
-							SteamworksAPI.Controller->Init();
+						// NOTE(ivan): When all initialization is done, present the window.
+						ShowWindow(Window, ShowCommand);
+						SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
 
-							// NOTE(ivan): When all initialization is done, present the window.
-							ShowWindow(Window, ShowCommand);
-							SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
+						// NOTE(ivan): Prepare game clocks and timings.
+						u64 LastCPUClockCounter = __rdtsc();
+						u64 LastCycleCounter = Win32GetClock();
 
-							// NOTE(ivan): Prepare game clocks and timings.
-							u64 LastCPUClockCounter = __rdtsc();
-							u64 LastCycleCounter = Win32GetClock();
+						// NOTE(ivan): Primary loop.
+						b32 IsGameRunning = true;
+						while (IsGameRunning) {
+							// NOTE(ivan): Process OS messages.
+							static MSG Msg;
+							while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
+								if (Msg.message == WM_QUIT)
+									IsGameRunning = false;
 
-							// NOTE(ivan): Primary loop.
-							b32 IsGameRunning = true;
-							while (IsGameRunning) {
-								// NOTE(ivan): Process OS messages.
-								static MSG Msg;
-								while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
-									if (Msg.message == WM_QUIT)
-										IsGameRunning = false;
-
-									TranslateMessage(&Msg);
-									DispatchMessageA(&Msg);
-								}
+								TranslateMessage(&Msg);
+								DispatchMessageA(&Msg);
+							}
 								
-								// NOTE(ivan): Do these routines only in case the main window is in focus.
-								if (Win32State.IsWindowActive) {
-									// NOTE(ivan): Process Xbox controllers state.
-									// TODO(ivan): Need to not poll disconnected controllers to avoid
-									// XInput frame rate hit on older libraries.
-									// TODO(ivan): Should we poll this more frequently?
-									DWORD MaxXboxControllers = XUSER_MAX_COUNT;
-									MaxXboxControllers = Min(MaxXboxControllers,
-															 ArraySize(GameInput.XboxControllers));
-									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
-										XINPUT_STATE XboxControllerState;
-										if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
-											XboxController->IsConnected = true;
+							// NOTE(ivan): Do these routines only in case the main window is in focus.
+							if (Win32State.IsWindowActive) {
+								// NOTE(ivan): Process Xbox controllers state.
+								static DWORD MaxXboxControllers = Min((u32)XUSER_MAX_COUNT,
+																	  ArraySize(GameInput.XboxControllers));
+								for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+									xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+									XINPUT_STATE XboxControllerState;
+									if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
+										XboxController->IsConnected = true;
 
-											// TODO(ivan): See if XboxControllerState.dwPacketNumber
-											// increments too rapidly.
+										// TODO(ivan): See if XboxControllerState.dwPacketNumber
+										// increments too rapidly.
+										static DWORD PrevXboxPacketNumber = 0;
+										if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
+											PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
+										
 											XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
 
 											// NOTE(ivan): Process buttons.
@@ -1257,331 +1161,113 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 											XboxController->RightStick.Pos.Y =
 												Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
 																			 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-
-											// NOTE(ivan): Vibrate if requested.
-											if (XboxController->DoVibration.LeftMotorSpeed ||
-												XboxController->DoVibration.RightMotorSpeed) {
-												XINPUT_VIBRATION XboxControllerVibr;
-												XboxControllerVibr.wLeftMotorSpeed
-													= XboxController->DoVibration.LeftMotorSpeed;
-												XboxControllerVibr.wRightMotorSpeed
-													= XboxController->DoVibration.RightMotorSpeed;
-
-												XInputModule.SetState(Index, &XboxControllerVibr);
-
-												XboxController->DoVibration.LeftMotorSpeed = 0;
-												XboxController->DoVibration.RightMotorSpeed = 0;
-											}
-										} else {
-											XboxController->IsConnected = false;
-										}
-									}
-									
-									// NOTE(ivan): Process Steam controllers state.
-									// NOTE(ivan): According to isteamcontroller.h comments, ISteamController::RunFrame()
-									// must be called somewhere before ISteamController::GetConnectedControllers().
-									SteamworksAPI.Controller->RunFrame();
-
-									static const u32 MaxSteamControllers = STEAM_INPUT_MAX_COUNT;
-									static ControllerHandle_t SteamControllerHandles[MaxSteamControllers];
-									u32 NumConnectedSteamControllers
-										= SteamworksAPI.Controller->GetConnectedControllers(SteamControllerHandles);
-									NumConnectedSteamControllers = Min(NumConnectedSteamControllers,
-																	   MaxSteamControllers);
-									for (u32 Index = 0; Index < NumConnectedSteamControllers; Index++) {
-										ControllerHandle_t SteamControllerHandle = SteamControllerHandles[Index];
-										steam_controller_state *SteamController = &GameInput.SteamControllers[Index];
-
-										SteamController->IsConnected = true;
-									  
-										// NOTE(ivan): Gather controller digital actions;
-										EControllerActionOrigin SteamControllerOrigins[STEAM_CONTROLLER_MAX_ORIGINS];
-										int NumSteamControllerOrigins
-											= SteamworksAPI.Controller->GetDigitalActionOrigins(SteamControllerHandle,
-																								0, 0,
-																								SteamControllerOrigins);
-										if (NumSteamControllerOrigins) {
-											// NOTE(ivan): Process general buttons.
-											Win32ProcessSteamDigitalButton(&SteamController->Start,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_Start);
-											Win32ProcessSteamDigitalButton(&SteamController->Back,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_Back);
-
-											Win32ProcessSteamDigitalButton(&SteamController->A,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_A);
-											Win32ProcessSteamDigitalButton(&SteamController->B,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_B);
-											Win32ProcessSteamDigitalButton(&SteamController->X,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_X);
-											Win32ProcessSteamDigitalButton(&SteamController->Y,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_Y);
-
-											Win32ProcessSteamDigitalButton(&SteamController->LeftBumper,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftBumper);
-											Win32ProcessSteamDigitalButton(&SteamController->RightBumper,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightBumper);
-
-											// NOTE(ivan): Process left stick.
-											Win32ProcessSteamDigitalButton(&SteamController->LeftStick.Button,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftStick_Click);
-
-											// NOTE(ivan): Process left pad.
-											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Up,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftPad_DPadNorth);
-											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Down,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftPad_DPadSouth);
-											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Left,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftPad_DPadWest);
-											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.DPad.Right,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftPad_DPadEast);
-
-											Win32ProcessSteamDigitalButton(&SteamController->LeftPad.Button,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_LeftPad_Click);
-
-											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
-																			   NumSteamControllerOrigins,
-																			   k_EControllerActionOrigin_LeftPad_Touch))
-												SteamController->LeftPad.IsTouchHappened = true;
-											else
-												SteamController->LeftPad.IsTouchHappened = false;
-
-											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
-																			   NumSteamControllerOrigins,
-																			   k_EControllerActionOrigin_LeftPad_Swipe))
-												SteamController->LeftPad.IsSwipeHappened = true;
-											else
-												SteamController->LeftPad.IsSwipeHappened = false;
-
-											// NOTE(ivan): Process right pad.
-											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Up,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightPad_DPadNorth);
-											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Down,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightPad_DPadSouth);
-											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Left,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightPad_DPadWest);
-											Win32ProcessSteamDigitalButton(&SteamController->RightPad.DPad.Right,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightPad_DPadEast);
-
-											Win32ProcessSteamDigitalButton(&SteamController->RightPad.Button,
-																		   SteamControllerOrigins,
-																		   NumSteamControllerOrigins,
-																		   k_EControllerActionOrigin_RightPad_Click);
-
-											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
-																			   NumSteamControllerOrigins,
-																			   k_EControllerActionOrigin_RightPad_Touch))
-												SteamController->RightPad.IsTouchHappened = true;
-											else
-												SteamController->RightPad.IsTouchHappened = false;
-
-											if (Win32ContainsSteamActionOrigin(SteamControllerOrigins,
-																			   NumSteamControllerOrigins,
-																			   k_EControllerActionOrigin_RightPad_Swipe))
-												SteamController->RightPad.IsSwipeHappened = true;
-											else
-												SteamController->RightPad.IsSwipeHappened = false;
 										}
 
-										// NOTE(ivan): Gather controller analog actions.
-										NumSteamControllerOrigins
-											= SteamworksAPI.Controller->GetAnalogActionOrigins(SteamControllerHandle,
-																							   0, 0,
-																							   SteamControllerOrigins);
-										if (NumSteamControllerOrigins) {
-											
+										// NOTE(ivan): Vibrate if requested (on previous frame).
+										if (XboxController->DoVibration.LeftMotorSpeed ||
+											XboxController->DoVibration.RightMotorSpeed) {
+											XINPUT_VIBRATION XboxControllerVibration;
+											XboxControllerVibration.wLeftMotorSpeed
+												= XboxController->DoVibration.LeftMotorSpeed;
+											XboxControllerVibration.wRightMotorSpeed
+												= XboxController->DoVibration.RightMotorSpeed;
+
+											XInputModule.SetState(Index, &XboxControllerVibration);
+
+											XboxController->DoVibration.LeftMotorSpeed = 0;
+											XboxController->DoVibration.RightMotorSpeed = 0;
 										}
-										
-										// NOTE(ivan): Set controller LED color.
-										u8 SteamControllerLED_R = (u8)((f32)SteamController->SetLEDColor.R * 255.0f);
-										u8 SteamControllerLED_G = (u8)((f32)SteamController->SetLEDColor.G * 255.0f);
-										u8 SteamControllerLED_B = (u8)((f32)SteamController->SetLEDColor.B * 255.0f);
-										SteamworksAPI.Controller->SetLEDColor(SteamControllerHandle,
-																			  SteamControllerLED_R,
-																			  SteamControllerLED_G,
-																			  SteamControllerLED_B,
-																			  0);
-										
-										// NOTE(ivan): Vibrate controller if requested.
-										if (SteamController->DoVibration.LeftMotorSpeed ||
-											SteamController->DoVibration.RightMotorSpeed) {
-											u16 LeftSpeed = SteamController->DoVibration.LeftMotorSpeed;
-											u16 RightSpeed = SteamController->DoVibration.RightMotorSpeed;
-											
-											SteamworksAPI.Controller->TriggerVibration(SteamControllerHandle,
-																					   LeftSpeed, RightSpeed);
-											
-											SteamController->DoVibration.LeftMotorSpeed = 0;
-											SteamController->DoVibration.RightMotorSpeed = 0;
-										}
+									} else {
+										XboxController->IsConnected = false;
 									}
-									
-									// NOTE(ivan): Process Win32-specific input events.
-									if (GameInput.KbButtons[KeyCode_F4].IsDown &&
-										(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
-										 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
-										IsGameRunning = false;
-
-									if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
-										Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
-
-									// NOTE(ivan): Update game frame.
-									GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0, 0);
-
-									// NOTE(ivan): Before the next frame, make all Steam-Controllers disconnected.
-									// This is needed because unlike with XInputGetState() we are not able to find
-									// out whether a controller with a specified index is connected or not.
-									for (u32 Index = 0; Index < MaxSteamControllers; Index++)
-										GameInput.SteamControllers[Index].IsConnected = false;
-
-									// NOTE(ivan): Before the next frame, make all input events obsolete.
-									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
-										GameInput.KbButtons[Index].IsNew = false;
-
-									for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
-										GameInput.MouseButtons[Index].IsNew = false;
-
-									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
-
-										XboxController->Start.IsNew = false;
-										XboxController->Back.IsNew = false;
-
-										XboxController->A.IsNew = false;
-										XboxController->B.IsNew = false;
-										XboxController->X.IsNew = false;
-										XboxController->Y.IsNew = false;
-
-										XboxController->DPad.Up.IsNew = false;
-										XboxController->DPad.Down.IsNew = false;
-										XboxController->DPad.Left.IsNew = false;
-										XboxController->DPad.Right.IsNew = false;
-
-										XboxController->LeftBumper.IsNew = false;
-										XboxController->RightBumper.IsNew = false;
-
-										XboxController->LeftStick.Button.IsNew = false;
-										XboxController->RightStick.Button.IsNew = false;
-									}
-
-									for (u32 Index = 0; Index < MaxSteamControllers; Index++) {
-										steam_controller_state *SteamController = &GameInput.SteamControllers[Index];
-
-										SteamController->Start.IsNew = false;
-										SteamController->Back.IsNew = false;
-
-										SteamController->A.IsNew = false;
-										SteamController->B.IsNew = false;
-										SteamController->X.IsNew = false;
-										SteamController->Y.IsNew = false;
-
-										SteamController->LeftPad.DPad.Up.IsNew = false;
-										SteamController->LeftPad.DPad.Down.IsNew = false;
-										SteamController->LeftPad.DPad.Left.IsNew = false;
-										SteamController->LeftPad.DPad.Right.IsNew = false;
-										SteamController->LeftPad.Button.IsNew = false;
-
-										SteamController->RightPad.DPad.Up.IsNew = false;
-										SteamController->RightPad.DPad.Down.IsNew = false;
-										SteamController->RightPad.DPad.Left.IsNew = false;
-										SteamController->RightPad.DPad.Right.IsNew = false;
-										SteamController->RightPad.Button.IsNew = false;
-
-										SteamController->LeftBumper.IsNew = false;
-										SteamController->RightBumper.IsNew = false;
-
-										SteamController->LeftStick.Button.IsNew = false;
-									}
-
-									// NOTE(ivan): Escape primary loop if quit has been requested.
-									if (Win32API.QuitRequested)
-										IsGameRunning = false;
-
-									// NOTE(ivan): Finalize timings and synchronize framerate.
-									u64 EndCycleCounter = Win32GetClock();
-									f32 CycleSecondsElapsed =
-										Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
-										
-									if (CycleSecondsElapsed < GameTargetFramerate) {
-										while (CycleSecondsElapsed < GameTargetFramerate) {
-											if (IsSleepGranular) {
-												DWORD SleepMS
-													= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
-												if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
-													Sleep(SleepMS);
-											}
-
-											CycleSecondsElapsed
-												= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
-										}
-									}
-									GameClocks.SecondsPerFrame = CycleSecondsElapsed;
-
-									u64 EndCPUClockCounter = __rdtsc();
-									GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
-
-									EndCycleCounter = Win32GetClock();
-									GameClocks.FramesPerSecond =
-										(f32)((f64)Win32State.PerformanceFrequency
-											  / (EndCycleCounter - LastCycleCounter));
-
-									LastCPUClockCounter = __rdtsc();
-									LastCycleCounter = EndCycleCounter;
 								}
+									
+								// NOTE(ivan): Process Win32-specific input events.
+								if (GameInput.KbButtons[KeyCode_F4].IsDown &&
+									(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
+									 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
+									IsGameRunning = false;
+
+								if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
+									Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
+
+								// NOTE(ivan): Update game frame.
+								GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0);
+
+								// NOTE(ivan): Before the next frame, make all input events obsolete.
+								for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
+									GameInput.KbButtons[Index].IsNew = false;
+
+								for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
+									GameInput.MouseButtons[Index].IsNew = false;
+
+								for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+									xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+
+									XboxController->Start.IsNew = false;
+									XboxController->Back.IsNew = false;
+
+									XboxController->A.IsNew = false;
+									XboxController->B.IsNew = false;
+									XboxController->X.IsNew = false;
+									XboxController->Y.IsNew = false;
+
+									XboxController->DPad.Up.IsNew = false;
+									XboxController->DPad.Down.IsNew = false;
+									XboxController->DPad.Left.IsNew = false;
+									XboxController->DPad.Right.IsNew = false;
+
+									XboxController->LeftBumper.IsNew = false;
+									XboxController->RightBumper.IsNew = false;
+
+									XboxController->LeftStick.Button.IsNew = false;
+									XboxController->RightStick.Button.IsNew = false;
+								}
+
+								// NOTE(ivan): Escape primary loop if quit has been requested.
+								IsGameRunning = !Win32API.QuitRequested;
+
+								// NOTE(ivan): Finalize timings and synchronize framerate.
+								u64 EndCycleCounter = Win32GetClock();
+								f32 CycleSecondsElapsed =
+									Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
+										
+								if (CycleSecondsElapsed < GameTargetFramerate) {
+									while (CycleSecondsElapsed < GameTargetFramerate) {
+										if (IsSleepGranular) {
+											DWORD SleepMS
+												= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
+											if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
+												Sleep(SleepMS);
+										}
+
+										CycleSecondsElapsed
+											= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+									}
+								}
+								GameClocks.SecondsPerFrame = CycleSecondsElapsed;
+
+								u64 EndCPUClockCounter = __rdtsc();
+								GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
+
+								EndCycleCounter = Win32GetClock();
+								GameClocks.FramesPerSecond =
+									(f32)((f64)Win32State.PerformanceFrequency
+										  / (EndCycleCounter - LastCycleCounter));
+
+								LastCPUClockCounter = __rdtsc();
+								LastCycleCounter = EndCycleCounter;
 							}
-
-							// NOTE(ivan): Release early-initialized Steamworks APIs.
-							SteamworksAPI.Controller->Shutdown();
-
-							// NOTE(ivan): Release game and its module.
-							GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0, 0);
-							FreeLibrary(GameModule.GameLibrary);
-						} else {
-							// NOTE(ivan): Game module cannot be loaded.
-							Win32Crashf(GAMENAME " cannot load game DLL!");
 						}
 
-						FreeLibrary(SteamworksModule.SteamLibrary);
+						// NOTE(ivan): Release game and its module.
+						GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0);
+						FreeLibrary(GameModule.GameLibrary);
 					} else {
-						// NOTE(ivan): Game cannot load Steamworks.
-						Win32Crashf(GAMENAME " cannot load Steamworks DLL!");
+						// NOTE(ivan): Game module cannot be loaded.
+						Win32Crashf(GAMENAME " cannot load game DLL!");
 					}
-					
+
 					FreeLibrary(XInputModule.XInputLibrary);
 
 					RawDevices[0].dwFlags = RIDEV_REMOVE;
@@ -1612,5 +1298,5 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 		Win32Crashf(GAMENAME " requires Windows 7 or newer OS!");
 	}
 
-	return 0;
+	return Win32API.QuitReturnCode;
 }

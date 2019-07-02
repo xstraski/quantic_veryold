@@ -14,7 +14,7 @@
 // pool blocks in a form of percentage, especially when a primary storage total size is always various.
 //
 // All memory partitions are living in game_state structure, and all initial memory partitionnig is done in
-// GameUpdate() function's initialization stage. Typical partition strategy: creating first partition with some percentage
+// GameTrigger() function's initialization stage. Typical partition strategy: creating first partition with some percentage
 // of wanted memory and getting left free space as a percent. After that, creating next partition with a percent of
 // wanted memory calculated using previously owned percentage of left free space. And so on...
 //

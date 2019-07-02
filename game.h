@@ -54,7 +54,6 @@ struct game_input {
 
 	// NOTE(ivan): Various supported controllers state.
 	xbox_controller_state XboxControllers[MAX_XBOX_CONTROLLERS_COUNT];
-	steam_controller_state SteamControllers[MAX_STEAM_CONTROLLERS_COUNT];
 };
 
 // NOTE(ivan): Command callback function prototype.
@@ -111,7 +110,6 @@ const char * GetSetting(setting_cache *Cache, const char *Name);
 extern struct game_state {
 	// NOTE(ivan): Game APIs access.
 	platform_api *PlatformAPI;
-	steamworks_api *SteamworksAPI;
 
 	// NOTE(ivan): Game data that gets exchanged between platform layer and game module each frame.
 	game_memory *GameMemory;
@@ -130,6 +128,12 @@ extern struct game_state {
 	setting_cache SettingCache;
 } GameState;
 
+inline void
+QuitGame(s32 QuitCode) {
+	GameState.PlatformAPI->QuitRequested = true;
+	GameState.PlatformAPI->QuitReturnCode = QuitCode;
+}
+
 // NOTE(ivan): Game trigger type.
 enum game_trigger_type {
 	GameTriggerType_Prepare, // NOTE(ivan): Game connection with platform layer, complete initialization.
@@ -141,7 +145,6 @@ enum game_trigger_type {
 // NOTE(ivan): Beware that some of the parameters might be 0 depending on trigger type.
 #define GAME_TRIGGER(Name) void Name(game_trigger_type TriggerType, \
 									 platform_api *PlatformAPI,		\
-									 steamworks_api *SteamworksAPI, \
 									 game_memory *GameMemory,		\
 									 game_clocks *GameClocks,		\
 									 game_input *GameInput)

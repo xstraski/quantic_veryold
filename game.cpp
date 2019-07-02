@@ -1,7 +1,6 @@
 #include "game.h"
 #include "game_memory.cpp"
 #include "game_misc.cpp"
-#include "game_steamworks.cpp"
 
 game_state GameState = {};
 
@@ -128,14 +127,6 @@ OutMemoryTableStats(void) {
 	
 }
 
-static void
-SteamWarningMessageHook(int SeverityLevel, const char *Message) {
-	if (SeverityLevel == 0)
-		GameState.PlatformAPI->Outf("[Steam] %s", Message);
-	else
-		GameState.PlatformAPI->Outf("[Steam-warning] %s", Message);
-}
-
 static b32
 CommandQuit(char **Params, u32 NumParams) {
 	UnusedParam(Params);
@@ -164,60 +155,34 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 	case GameTriggerType_Prepare: {
 		// NOTE(ivan): Set APIs.
 		GameState.PlatformAPI = PlatformAPI;
-		GameState.SteamworksAPI = SteamworksAPI;
 
 		// NOTE(ivan): Set platform-exchangable data.
 		GameState.GameMemory = GameMemory;
 		GameState.GameClocks = GameClocks;
 		GameState.GameInput = GameInput;
 
-		// NOTE(ivan): Initialize Steamworks.
-		GameState.PlatformAPI->Outf("Initializing Steamworks...");
-		if (GameState.SteamworksAPI->Init()) {
-			GainAccessToSteamworksInterfaces();
-			
-			// NOTE(ivan): If Steam is not running or the game wasn't started through Steam,
-			// SteamworksAPI->RestartAppIfNecessary() starts the local Steam client and also launches the game again.
-			if (!GameState.SteamworksAPI->RestartAppIfNecessary(GAME_STEAM_APPID)) {
-				// NOTE(ivan): Set Steamworks hooks.
-				GameState.SteamworksAPI->Client->SetWarningMessageHook(SteamWarningMessageHook);
+		// NOTE(ivan): Organize memory partitions.
+		GameState.PlatformAPI->Outf("Partitioning game primary storage...");
+		u32 FreeStoragePercent = 100;
+		FreeStoragePercent = CreateMemoryStack(&GameState.PerFrameStack, "PerFrameStack",
+											   Percentage(10, FreeStoragePercent));
+		FreeStoragePercent = CreateMemoryStack(&GameState.PermanentStack, "PermanentStack",
+											   Percentage(30, FreeStoragePercent));
+		FreeStoragePercent = CreateMemoryPool(&GameState.CommandsPool, "CommandsPool",
+											  sizeof(command), Percentage(10, FreeStoragePercent));
+		FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
+											  sizeof(setting), Percentage(10, FreeStoragePercent));
+		OutMemoryTableStats();
 
-				// NOTE(ivan): Check whether the user has logged into Steam.
-				if (GameState.SteamworksAPI->User->BLoggedOn()) {
-					// NOTE(ivan): Organize memory partitions.
-					GameState.PlatformAPI->Outf("Partitioning game primary storage...");
-					u32 FreeStoragePercent = 100;
-					FreeStoragePercent = CreateMemoryStack(&GameState.PerFrameStack, "PerFrameStack",
-														   Percentage(10, FreeStoragePercent));
-					FreeStoragePercent = CreateMemoryStack(&GameState.PermanentStack, "PermanentStack",
-														   Percentage(30, FreeStoragePercent));
-					FreeStoragePercent = CreateMemoryPool(&GameState.CommandsPool, "CommandsPool",
-														  sizeof(command), Percentage(10, FreeStoragePercent));
-					FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
-														  sizeof(setting), Percentage(10, FreeStoragePercent));
-					OutMemoryTableStats();
-
-					// NOTE(ivan): Register commands.
-					RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
-					if (IsInternal()) {
-						RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
-					}
-
-					// NOTE(ivan): Load settings.
-					LoadSettingsFromFile(&GameState.SettingCache, "default.set");
-					LoadSettingsFromFile(&GameState.SettingCache, "user.set");
-				} else {
-					// NOTE(ivan): User must be logged into Steam.
-					GameState.PlatformAPI->Crashf(GAMENAME " requires user to be logged into Steam!");
-				}
-			} else {
-				// NOTE(ivan): Restart the game by Steam.
-				GameState.PlatformAPI->QuitRequested = true;
-			}
-		} else {
-			// NOTE(ivan): Game cannot initialize Steamworks.
-			GameState.PlatformAPI->Crashf(GAMENAME " cannot initialize Steamworks!");
+		// NOTE(ivan): Register commands.
+		RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
+		if (IsInternal()) {
+			RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
 		}
+
+		// NOTE(ivan): Load settings.
+		LoadSettingsFromFile(&GameState.SettingCache, "default.set");
+		LoadSettingsFromFile(&GameState.SettingCache, "user.set");
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -226,9 +191,6 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 	case GameTriggerType_Release: {
 		// NOTE(ivan): Save settings.
 		SaveSettingsToFile(&GameState.SettingCache, "user.set");
-
-		// NOTE(ivan): Shutdown Steamworks.
-		GameState.SteamworksAPI->Shutdown();
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////

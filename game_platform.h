@@ -461,6 +461,7 @@ struct platform_api {
 	platform_fflush *FFlush;
 
 	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop at the end of current frame.
+	s32 QuitReturnCode;
 
 	// NOTE(ivan): Executable's file name in various forms.
 	const char *ExecutableName;      // NOTE(ivan): File name with extension.
@@ -477,6 +478,6 @@ struct platform_api {
 
 	// NOTE(ivan): CPU information.
 	cpu_info CPUInfo;
-};
+};	
 
 #endif // #ifndef GAME_PLATFORM_H
