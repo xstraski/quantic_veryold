@@ -94,7 +94,7 @@ struct memory_heap_block {
 	memory_heap_block *NextBlock;
 	memory_heap_block *PrevBlock;
 
-	uptr Size;;
+	uptr Size;
 	b32 IsFree;
 };
 
@@ -105,6 +105,7 @@ struct memory_heap {
 	piece Piece;
 	memory_heap_block *Blocks;
 	u32 NumBlocks;
+	uptr UsedSize;
 
 	ticket_mutex Mutex;
 };

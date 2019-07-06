@@ -463,7 +463,6 @@ struct platform_api {
 	// NOTE(ivan): Quit flags (corresponding functions QuitGame() and RestartGame() are located in game.h header file).
 	b32 QuitRequested; // NOTE(ivan): Set to true to quit from primary loop at the end of current frame.
 	s32 QuitReturnCode;
-
 	b32 QuitToRestart; // NOTE(ivan): Set to true to start again the program after quit.
 
 	// NOTE(ivan): Executable's file name in various forms.

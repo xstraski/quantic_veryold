@@ -543,12 +543,12 @@ Win32LoadXInputModule(void) {
 		Result.XInputLibrary = LoadLibraryA("xinput1_3.dll");
 	}
 	if (Result.XInputLibrary) {
+		Result.GetState = (x_input_get_state *)GetProcAddress(Result.XInputLibrary, "XInputGetState");
+		Result.SetState = (x_input_set_state *)GetProcAddress(Result.XInputLibrary, "XInputSetState");
+		
 		// NOTE(ivan): We target to the oldest available XInput library version 1.3
 		// so the program can run on at least Windows 7 without any additional DX-redistributables installation.
 		// The functions XInputGetState() and XInputSetState() are guaranteed to be there.
-		Result.GetState = (x_input_get_state *)GetProcAddress(Result.XInputLibrary, "XInputGetState");
-		Result.SetState = (x_input_set_state *)GetProcAddress(Result.XInputLibrary, "XInputSetState");
-
 		if (Result.GetState && Result.SetState) {
 			Result.IsValid = true; // NOTE(ivan): Success.
 			Win32Outf("...success.");
@@ -1231,10 +1231,10 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 											static DWORD PrevXboxPacketNumber = 0;
 											if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
 												PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
-										
+												
+												// NOTE(ivan): Process buttons.
 												XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
 
-												// NOTE(ivan): Process buttons.
 												Win32ProcessXInputDigitalButton(&XboxController->Start,
 																				XboxGamepad->wButtons,
 																				XINPUT_GAMEPAD_START);

@@ -17,7 +17,6 @@ struct game_memory {
 	piece FreeStorage;     // NOTE(ivan): Storage's starting address of its free space and size of this space in bytes.
 	uptr StorageTotalSize; // NOTE(ivan): Storage's total size in bytes.
 
-	// NOTE(ivan): For synchronization, used by EatGameMemory() function.
 	ticket_mutex Mutex;
 };
 
@@ -46,11 +45,11 @@ IsNewlyPressed(input_button_state *Button) {
 // NOTE(ivan): Generic mouse buttons.
 enum mouse_button {
 	MouseButton_Left = 0,
-	MouseButton_Middle = 1,
-	MouseButton_Right = 2,
+	MouseButton_Middle,
+	MouseButton_Right,
 
-	MouseButton_X1 = 3,
-	MouseButton_X2 = 4,
+	MouseButton_X1,
+	MouseButton_X2,
 
 	MouseButton_MaxCount
 };
@@ -116,7 +115,7 @@ struct xbox_controller_state {
 	controller_stick_state RightStick;
 
 	// NOTE(ivan): Set this to non-zero to vibrate the controller or use VibrateXboxController() function.
-	// NOTE(ivan): After actual vibration motor speed values will be reset to 0;
+	// NOTE(ivan): After actual vibration motor speed values will be reset to 0.
 	controller_vibration DoVibration;
 };
 
@@ -168,7 +167,7 @@ void UnregisterCommand(command_cache *Cache, const char *Name);
 void ExecCommand(command_cache *Cache, const char *Command, ...);
 
 // NOTE(ivan): Setting. A structure that links two strings that tells the name and value.
-// NOTE(ivan): Mustly used for working with game configuration settings.
+// Mostly used for working with game configuration settings.
 struct setting {
 	char Name[128];
 	char Value[128];

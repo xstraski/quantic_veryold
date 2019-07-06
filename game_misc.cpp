@@ -66,6 +66,8 @@ TokenizeString(memory_heap *Heap, const char *String, u32 *NumTokens, const char
 
 			if (*Ptr == 0)
 				break;
+
+			Ptr++;
 		}
 	}
 

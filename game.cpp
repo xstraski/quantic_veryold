@@ -9,21 +9,83 @@ RegisterCommand(command_cache *Cache, const char *Name, command_callback *Callba
 	Assert(Cache);
 	Assert(Name);
 	Assert(Callback);
+
+	EnterTicketMutex(&Cache->Mutex);
+
+	command *NewCommand = (command *)AllocFromPool(&GameState.CommandsPool);
+	if (NewCommand) {
+		strncpy(NewCommand->Name, Name, ArraySize(NewCommand->Name) - 1);
+		NewCommand->Callback = Callback;
+
+		NewCommand->NextCommand = Cache->TopCommand;
+		NewCommand->PrevCommand = 0;
+		if (Cache->TopCommand)
+			Cache->TopCommand->PrevCommand = NewCommand;
+		Cache->TopCommand = NewCommand;
+		Cache->NumCommands++;
+	} else {
+		GameState.PlatformAPI->Outf("RegisterCommand[%s]: Out of memory!", Name);
+	}
+
+	LeaveTicketMutex(&Cache->Mutex);
+}
+
+inline command *
+FindCommand(command_cache *Cache, const char *Name) {
+	Assert(Cache);
+	Assert(Name);
+	
+	command *Result = 0;
+	for (Result = Cache->TopCommand; Result; Result = Result->NextCommand) {
+		if (strcmp(Result->Name, Name) == 0)
+			break;
+	}
+
+	return Result;
 }
 
 void
 UnregisterCommand(command_cache *Cache, const char *Name) {
 	Assert(Cache);
 	Assert(Name);
+
+	EnterTicketMutex(&Cache->Mutex);
+
+	command *Command = FindCommand(Cache, Name);
+	if (Command) {
+		if (Command->NextCommand)
+			Command->NextCommand->PrevCommand = Command->PrevCommand;
+		if (Command->PrevCommand)
+			Command->PrevCommand->NextCommand = Command->NextCommand;
+		if (--Cache->NumCommands == 0)
+			Cache->TopCommand = 0;
+
+		FreeFromPool(&GameState.CommandsPool, Command);
+	}
+
+	LeaveTicketMutex(&Cache->Mutex);
 }
 
 void
 ExecCommand(command_cache *Cache, const char *Command, ...) {
 	Assert(Cache);
 	Assert(Command);
+
+	char FullCommand[1024] = {};
+	CollectArgsN(FullCommand, ArraySize(FullCommand) - 1, Command);
+
+	u32 NumTokens;
+	char **Tokens = TokenizeString(&GameState.PerFrameHeap, Command, &NumTokens, " \t");
+	if (Tokens) {
+		command *Info = FindCommand(Cache, Tokens[0]);
+		if (Info)
+			Info->Callback(Tokens, NumTokens);
+		
+		FreeTokenizedString(&GameState.PerFrameHeap, Tokens, NumTokens);
+	}
 }
 
-inline void
+static void
 PushSetting(setting_cache *Cache, const char *Name, const char *Value) {
 	Assert(Cache);
 	Assert(Name);
@@ -52,7 +114,7 @@ PushSetting(setting_cache *Cache, const char *Name, const char *Value) {
 		Cache->TopSetting = NewSetting;
 		Cache->NumSettings++;
 	} else {
-		GameState.PlatformAPI->Outf("PushSetting: Out of memory!");
+		GameState.PlatformAPI->Outf("PushSetting[%s][%s]: Out of memory!", Name, Value);
 	}
 }
 
@@ -68,9 +130,8 @@ LoadSettingsFromFile(setting_cache *Cache, const char *FileName) {
 			u32 NumTokens;
 			char **Tokens = TokenizeString(&GameState.PerFrameHeap, LineBuffer, &NumTokens, " \t");
 			if (Tokens) {
-				if (NumTokens >= 2) {
+				if (NumTokens >= 2)
 					PushSetting(Cache, Tokens[0], Tokens[1]);
-				}
 
 				FreeTokenizedString(&GameState.PerFrameHeap, Tokens, NumTokens);
 			}
@@ -135,37 +196,54 @@ GetSetting(setting_cache *Cache, const char *Name) {
 inline void
 OutMemoryStackStats(memory_stack *Stack) {
 	Assert(Stack);
+
+	EnterTicketMutex(&Stack->Mutex);
 	
 	const f64 Mb = (f64)(1024 * 1024);
-	GameState.PlatformAPI->Outf("[%s] : eated %f Mb, used %f Mb, free %f Mb.",
+	GameState.PlatformAPI->Outf("[%s] : eated %.3f Mb, used %.3f Mb, free %.3f Mb.",
 								Stack->Name,
-								(f64)Stack->Piece.Size / Mb,
-								(f64)Stack->Mark / Mb,
-								(f64)(Stack->Piece.Size - Stack->Mark) / Mb);
+								(f32)(Stack->Piece.Size / Mb),
+								(f32)(Stack->Mark / Mb),
+								(f32)((Stack->Piece.Size - Stack->Mark) / Mb));
+
+	LeaveTicketMutex(&Stack->Mutex);
 }
 
 inline void
 OutMemoryPoolStats(memory_pool *Pool) {
 	Assert(Pool);
+
+	EnterTicketMutex(&Pool->Mutex);
 	
 	const f64 Mb = (f64)(1024 * 1024);
-	GameState.PlatformAPI->Outf("[%s] : eated %f Mb, blocksize %f Mb, alloc %d blocks, free %d blocks.",
+	GameState.PlatformAPI->Outf("[%s] : eated %.3f Mb, blocksize %d bytes, alloc %d blocks, free %d blocks.",
 								Pool->Name,
-								(f64)((Pool->BlockSize + sizeof(memory_pool_block)) * Pool->MaxBlocks) / Mb,
-								(f64)Pool->BlockSize / Mb,
+								(f32)(((Pool->BlockSize + sizeof(memory_pool_block)) * Pool->MaxBlocks) / Mb),
+								Pool->BlockSize,
 								Pool->NumAllocBlocks,
 								Pool->NumFreeBlocks);
+
+	LeaveTicketMutex(&Pool->Mutex);
 }
 
 inline void
 OutMemoryHeapStats(memory_heap *Heap) {
-	UnusedParam(Heap);
+	Assert(Heap);
+
+	EnterTicketMutex(&Heap->Mutex);
+
+	const f64 Mb = (f64)(1024 * 1024);
+	GameState.PlatformAPI->Outf("[%s] : eated %.3f Mb, used %.3f Mb, %d blocks.",
+								Heap->Name,
+								(f32)(Heap->Piece.Size / Mb),
+								(f32)(Heap->UsedSize / Mb),
+								Heap->NumBlocks);
+
+	LeaveTicketMutex(&Heap->Mutex);
 }
 
 static void
 OutMemoryTableStats(void) {
-	const f64 Mb = (f64)(1024 * 1024);
-	
 	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
 	
 	OutMemoryHeapStats(&GameState.PerFrameHeap);
@@ -175,11 +253,13 @@ OutMemoryTableStats(void) {
 	OutMemoryPoolStats(&GameState.SettingsPool);
 	
 	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
-	
-	GameState.PlatformAPI->Outf("* Game primary storage total size: %f Mb.",
+	const f64 Mb = (f64)(1024 * 1024);
+	EnterTicketMutex(&GameState.GameMemory->Mutex);
+	GameState.PlatformAPI->Outf("* Game primary storage total size: %.3f Mb.",
 								(f64)GameState.GameMemory->StorageTotalSize / Mb);
-	GameState.PlatformAPI->Outf("* Game primary stroage left space size: %f Mb",
+	GameState.PlatformAPI->Outf("* Game primary stroage left space size: %.3f Mb",
 								(f64)GameState.GameMemory->FreeStorage.Size / Mb);
+	LeaveTicketMutex(&GameState.GameMemory->Mutex);
 	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
 	
 }
@@ -187,8 +267,7 @@ OutMemoryTableStats(void) {
 static b32
 CommandQuit(char **Params, u32 NumParams) {
 	if (NumParams >= 2) {
-		s32 QuitCode = atoi(Params[1]);
-		QuitGame(QuitCode);
+		QuitGame(atoi(Params[1]));
 	} else {
 		QuitGame(0);
 	}
@@ -217,10 +296,10 @@ CommandCauseAV(char **Params, u32 NumParams) {
 #endif // #if INTERNAL
 
 extern "C" GAME_TRIGGER(GameTrigger) {
-	// NOTE(ivan): Various game-specific file names.
+	// NOTE(ivan): Various game file names.
 	static const char GameDefaultSettingsFileName[] = "default.set";
 	static const char GameUserSettingsFileName[] = "user.set";
-	
+
 	switch (TriggerType) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 		// NOTE(ivan): Game initialization.
@@ -275,7 +354,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 	case GameTriggerType_Frame: {
 		// NOTE(ivan): Clean up per-frame heap.
 		ResetMemoryHeap(&GameState.PerFrameHeap);
-		
+
 #if INTERNAL		
 		// NOTE(ivan): Restart if requested.
 		if (GameState.GameInput->KbButtons[KeyCode_F1].IsDown)

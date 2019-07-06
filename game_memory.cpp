@@ -124,16 +124,16 @@ GetBlockByIndex(memory_pool *Pool, u32 Index) {
 	return (memory_pool_block *)(Pool->Piece.Base + ((sizeof(memory_pool_block) + Pool->BlockSize) * Index));
 }
 
+inline memory_pool_block *
+GetBlockByData(void *Data) {
+	Assert(Data);
+	return (memory_pool_block *)((u8 *)Data - sizeof(memory_pool_block));
+}
+
 inline u8 *
 GetBlockData(memory_pool_block *Block) {
 	Assert(Block);
 	return (u8 *)(Block + sizeof(memory_pool_block));
-}
-
-inline memory_pool_block *
-GetDataBlock(void *Data) {
-	Assert(Data);
-	return (memory_pool_block *)((u8 *)Data - sizeof(memory_pool_block));
 }
 
 u32
@@ -178,7 +178,7 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePe
 	}
 
 	Result = GetFreeGameMemorySizePercentage();
-
+	
 	LeaveTicketMutex(&Pool->Mutex);
 
 	return Result;
@@ -190,12 +190,22 @@ ResetMemoryPool(memory_pool *Pool) {
 
 	EnterTicketMutex(&Pool->Mutex);
 	
+	Pool->AllocBlocks = 0;
+	Pool->FreeBlocks = GetBlockByIndex(Pool, 0);
 	for (u32 Index = 0; Index < Pool->MaxBlocks; Index++) {
-		memory_pool_block *Block = GetBlockByIndex(Pool, Index);
-		u8 *BlockData = GetBlockData(Block);
+		memory_pool_block *NewBlock = GetBlockByIndex(Pool, Index);
+		
+		if (Index > 0)
+			NewBlock->PrevBlock = GetBlockByIndex(Pool, Index - 1);
+		if (Index < (Pool->MaxBlocks - 1))
+			NewBlock->NextBlock = GetBlockByIndex(Pool, Index + 1);
 
-		memset(BlockData, 0, Pool->BlockSize);
+		u8 *NewData = GetBlockData(NewBlock);
+		memset(NewData, 0, Pool->BlockSize);
 	}
+	
+	Pool->NumAllocBlocks = 0;
+	Pool->NumFreeBlocks = Pool->MaxBlocks;
 
 	LeaveTicketMutex(&Pool->Mutex);
 }
@@ -213,13 +223,15 @@ AllocFromPool(memory_pool *Pool) {
 		Result = GetBlockData(TargetBlock);
 
 		if (TargetBlock->PrevBlock)
-			TargetBlock->PrevBlock = TargetBlock->NextBlock;
+			TargetBlock->PrevBlock->NextBlock = TargetBlock->NextBlock;
 		if (TargetBlock->NextBlock)
-			TargetBlock->NextBlock = TargetBlock->PrevBlock;
+			TargetBlock->NextBlock->PrevBlock = TargetBlock->PrevBlock;
+		Pool->FreeBlocks = TargetBlock->NextBlock;
 		if (--Pool->NumFreeBlocks == 0)
 			Pool->FreeBlocks = 0;
 
-		Pool->AllocBlocks->PrevBlock = TargetBlock;
+		if (Pool->AllocBlocks)
+			Pool->AllocBlocks->PrevBlock = TargetBlock;
 		TargetBlock->NextBlock = Pool->AllocBlocks;
 		TargetBlock->PrevBlock = 0;
 		Pool->AllocBlocks = TargetBlock;
@@ -242,7 +254,7 @@ FreeFromPool(memory_pool *Pool, void *Base) {
 
 	EnterTicketMutex(&Pool->Mutex);
 
-	memory_pool_block *Block = GetDataBlock(Base);
+	memory_pool_block *Block = GetBlockByData(Base);
 
 	if (Block->NextBlock)
 		Block->NextBlock->PrevBlock = Block->NextBlock;
@@ -285,6 +297,7 @@ CreateMemoryHeap(memory_heap *Heap, const char *Name, u32 SizePercentage) {
 
 		Heap->Blocks = EntireBlock;
 		Heap->NumBlocks = 0;
+		Heap->UsedSize = 0;
 	} else {
 		GameState.PlatformAPI->Crashf("CreateMemoryHeap[%s]: Out of memory!", Name);
 	}
@@ -310,6 +323,7 @@ ResetMemoryHeap(memory_heap *Heap) {
 	
 	Heap->Blocks = EntireBlock;
 	Heap->NumBlocks = 0;
+	Heap->UsedSize = 0;
 
 	LeaveTicketMutex(&Heap->Mutex);
 }
@@ -338,7 +352,8 @@ AllocFromHeap(memory_heap *Heap, uptr Size) {
 		} else {
 			HostBlock->Size -= RealSize;
 
-			memory_heap_block *NewBlock = (memory_heap_block *)((u8 *)HostBlock + RealSize);
+			memory_heap_block *NewBlock = (memory_heap_block *)((u8 *)HostBlock
+																+ sizeof(memory_heap_block) + HostBlock->Size);
 			NewBlock->Size = Size;
 			NewBlock->IsFree = false;
 			NewBlock->NextBlock = HostBlock->NextBlock;
@@ -349,6 +364,7 @@ AllocFromHeap(memory_heap *Heap, uptr Size) {
 			HostBlock->NextBlock = NewBlock;
 
 			Heap->NumBlocks++;
+			Heap->UsedSize += RealSize;
 			
 			Result = (void *)((u8 *)NewBlock + sizeof(memory_heap_block));
 			memset(Result, 0, Size);
@@ -370,6 +386,7 @@ FreeFromHeap(memory_heap *Heap, void *Base) {
 	EnterTicketMutex(&Heap->Mutex);
 
 	memory_heap_block *Block = (memory_heap_block *)((u8 *)Base - sizeof(memory_heap_block));
+	uptr RealSize = Block->Size + sizeof(memory_heap_block);
 
 	memory_heap_block *HostBlock = 0;
 	memory_heap_block *NeighborBlock = 0;
@@ -388,7 +405,11 @@ FreeFromHeap(memory_heap *Heap, void *Base) {
 		HostBlock->NextBlock = NeighborBlock->NextBlock;
 		if (NeighborBlock->NextBlock)
 			NeighborBlock->NextBlock->PrevBlock = HostBlock;
+	} else {
+		Block->IsFree = true;
 	}
+
+	Heap->UsedSize -= RealSize;
 
 	LeaveTicketMutex(&Heap->Mutex);
 }
