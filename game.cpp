@@ -5,10 +5,11 @@
 game_state GameState = {};
 
 void
-RegisterCommand(command_cache *Cache, const char *Name, command_callback *Callback) {
-	Assert(Cache);
+RegisterCommand(const char *Name, command_callback *Callback) {
 	Assert(Name);
 	Assert(Callback);
+
+	command_cache *Cache = &GameState.CommandCache;
 
 	EnterTicketMutex(&Cache->Mutex);
 
@@ -31,9 +32,10 @@ RegisterCommand(command_cache *Cache, const char *Name, command_callback *Callba
 }
 
 inline command *
-FindCommand(command_cache *Cache, const char *Name) {
-	Assert(Cache);
+FindCommand(const char *Name) {
 	Assert(Name);
+
+	command_cache *Cache = &GameState.CommandCache;
 	
 	command *Result = 0;
 	for (Result = Cache->TopCommand; Result; Result = Result->NextCommand) {
@@ -45,13 +47,14 @@ FindCommand(command_cache *Cache, const char *Name) {
 }
 
 void
-UnregisterCommand(command_cache *Cache, const char *Name) {
-	Assert(Cache);
+UnregisterCommand(const char *Name) {
 	Assert(Name);
+
+	command_cache *Cache = &GameState.CommandCache;
 
 	EnterTicketMutex(&Cache->Mutex);
 
-	command *Command = FindCommand(Cache, Name);
+	command *Command = FindCommand(Name);
 	if (Command) {
 		if (Command->NextCommand)
 			Command->NextCommand->PrevCommand = Command->PrevCommand;
@@ -67,8 +70,7 @@ UnregisterCommand(command_cache *Cache, const char *Name) {
 }
 
 void
-ExecCommand(command_cache *Cache, const char *Command, ...) {
-	Assert(Cache);
+ExecCommand(const char *Command, ...) {
 	Assert(Command);
 
 	char FullCommand[1024] = {};
@@ -77,7 +79,7 @@ ExecCommand(command_cache *Cache, const char *Command, ...) {
 	u32 NumTokens;
 	char **Tokens = TokenizeString(&GameState.PerFrameHeap, Command, &NumTokens, " \t");
 	if (Tokens) {
-		command *Info = FindCommand(Cache, Tokens[0]);
+		command *Info = FindCommand(Tokens[0]);
 		if (Info)
 			Info->Callback(Tokens, NumTokens);
 		
@@ -86,10 +88,11 @@ ExecCommand(command_cache *Cache, const char *Command, ...) {
 }
 
 static void
-PushSetting(setting_cache *Cache, const char *Name, const char *Value) {
-	Assert(Cache);
+PushSetting(const char *Name, const char *Value) {
 	Assert(Name);
 	Assert(Value);
+
+	setting_cache *Cache = &GameState.SettingCache;
 
 	// NOTE(ivan): If already exists - change its value.
 	for (setting *Setting = Cache->TopSetting; Setting; Setting = Setting->PrevSetting) {
@@ -119,10 +122,13 @@ PushSetting(setting_cache *Cache, const char *Name, const char *Value) {
 }
 
 b32
-LoadSettingsFromFile(setting_cache *Cache, const char *FileName) {
-	Assert(Cache);
+LoadSettingsFromFile(const char *FileName) {
 	Assert(FileName);
 
+	GameState.PlatformAPI->Outf("Loading settings from file '%s'...", FileName);
+
+	b32 Result = false;
+	
 	file_handle FileHandle = GameState.PlatformAPI->FOpen(FileName, FileAccessType_OpenForReading);
 	if (FileHandle != NOTFOUND) {
 		char LineBuffer[1024] = {};
@@ -131,24 +137,30 @@ LoadSettingsFromFile(setting_cache *Cache, const char *FileName) {
 			char **Tokens = TokenizeString(&GameState.PerFrameHeap, LineBuffer, &NumTokens, " \t");
 			if (Tokens) {
 				if (NumTokens >= 2)
-					PushSetting(Cache, Tokens[0], Tokens[1]);
+					PushSetting(Tokens[0], Tokens[1]);
 
 				FreeTokenizedString(&GameState.PerFrameHeap, Tokens, NumTokens);
 			}
 
 		}
-		
+
+		Result = true;
 		GameState.PlatformAPI->FClose(FileHandle);
+		GameState.PlatformAPI->Outf("...success");
+	} else {
+		GameState.PlatformAPI->Outf("...fail, file not found!");
 	}
 	
-	return false;
+	return Result;
 }
 
 b32
-SaveSettingsToFile(setting_cache *Cache, const char *FileName) {
-	Assert(Cache);
+SaveSettingsToFile(const char *FileName) {
 	Assert(FileName);
 
+	GameState.PlatformAPI->Outf("Saving settings to file '%s'...", FileName);
+
+	setting_cache *Cache = &GameState.SettingCache;
 	b32 Result = false;
 
 	EnterTicketMutex(&Cache->Mutex);
@@ -165,18 +177,21 @@ SaveSettingsToFile(setting_cache *Cache, const char *FileName) {
 		}
 
 		GameState.PlatformAPI->FClose(FileHandle);
+		GameState.PlatformAPI->Outf("...success.");
+	} else {
+		GameState.PlatformAPI->Outf("...fail, access denied!");
 	}
 
 	LeaveTicketMutex(&Cache->Mutex);
 	
-	return false;
+	return Result;
 }
 
 const char *
-GetSetting(setting_cache *Cache, const char *Name) {
-	UnusedParam(Cache);
-	UnusedParam(Name);
+GetSetting(const char *Name) {
+	Assert(Name);
 
+	setting_cache *Cache = &GameState.SettingCache;
 	const char *Result = 0;
 
 	EnterTicketMutex(&Cache->Mutex);
@@ -191,6 +206,10 @@ GetSetting(setting_cache *Cache, const char *Name) {
 	LeaveTicketMutex(&Cache->Mutex);
 	
 	return 0;
+}
+
+inline void
+OutCPUStats(void) {
 }
 
 inline void
@@ -295,10 +314,29 @@ CommandCauseAV(char **Params, u32 NumParams) {
 }
 #endif // #if INTERNAL
 
+static b32
+CommandOutCPU(char **Params, u32 NumParams) {
+	UnusedParam(Params);
+	UnusedParam(NumParams);
+
+	OutCPUStats();
+	return true;
+}
+
+static b32
+CommandOutRAM(char **Params, u32 NumParams) {
+	UnusedParam(Params);
+	UnusedParam(NumParams);
+	
+	OutMemoryTableStats();
+	return true;
+}
+
 extern "C" GAME_TRIGGER(GameTrigger) {
 	// NOTE(ivan): Various game file names.
 	static const char GameDefaultSettingsFileName[] = "default.set";
 	static const char GameUserSettingsFileName[] = "user.set";
+	static const char GameEdSettingsFileName[] = "ed.set";
 
 	switch (TriggerType) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -312,6 +350,16 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		GameState.GameMemory = GameMemory;
 		GameState.GameClocks = GameClocks;
 		GameState.GameInput = GameInput;
+
+		// NOTE(ivan): Check whether we wants to enable developer mode.
+#if INTERNAL
+		GameState.IsDeveloperMode = true;
+#else		
+		if (GameState.PlatformAPI->CheckParam("-devmode") != NOTFOUND)
+			GameState.IsDeveloperMode = true;
+#endif		
+		if (GameState.IsDeveloperMode)
+			GameState.PlatformAPI->Outf("Running in developer mode.");
 
 		// NOTE(ivan): Organize memory partitions.
 		// TODO(ivan): Calibrate memory partitions sizes to make them
@@ -329,23 +377,27 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		OutMemoryTableStats();
 
 		// NOTE(ivan): Register base commands.
-		RegisterCommand(&GameState.CommandCache, "quit", CommandQuit);
-		RegisterCommand(&GameState.CommandCache, "restart", CommandRestart);
+		RegisterCommand("quit", CommandQuit);
+		RegisterCommand("restart", CommandRestart);
+		RegisterCommand("outcpu", CommandOutCPU);
+		RegisterCommand("outram", CommandOutRAM);
 		if (IsInternal()) {
-			RegisterCommand(&GameState.CommandCache, "causeav", CommandCauseAV);
+			RegisterCommand("causeav", CommandCauseAV);
 		}
 
 		// NOTE(ivan): Load settings.
-		LoadSettingsFromFile(&GameState.SettingCache, GameDefaultSettingsFileName);
-		LoadSettingsFromFile(&GameState.SettingCache, GameUserSettingsFileName);
+		LoadSettingsFromFile(GameDefaultSettingsFileName);
+		LoadSettingsFromFile(GameUserSettingsFileName);
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 		// NOTE(ivan): Game de-initialization.
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 	case GameTriggerType_Release: {
+		GameState.PlatformAPI->Outf("Shutting down...");
+		
 		// NOTE(ivan): Save settings.
-		SaveSettingsToFile(&GameState.SettingCache, GameUserSettingsFileName);
+		SaveSettingsToFile(GameUserSettingsFileName);
 	} break;
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////

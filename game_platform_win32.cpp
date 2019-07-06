@@ -118,6 +118,9 @@ static struct {
 	b32 IsDebuggerActive; // NOTE(ivan): Indicates whether the program is running under the debugger.
 	b32 IsWindowActive; // NOTE(ivan): Indicates whether the main window is active or not (focused/not focused).
 
+	// NOTE(ivan): Standard text stream.
+	HANDLE Stdout;
+
 	// NOTE(ivan): Game input, needs to be global to be accessed by Win32WindowProc()'s raw input routines.
 	game_input *GameInput;
 
@@ -193,11 +196,20 @@ static PLATFORM_OUTF(Win32Outf) {
 	char Buffer[2048] = {};
 	CollectArgsN(Buffer, ArraySize(Buffer) - 1, Format);
 
-	// NOTE(ivan): Out to debugger's output window if any.
+	char FinalString[2048] = {};
+	u32 FinalStringLength = snprintf(FinalString, ArraySize(FinalString) - 1, "%s\r\n", Buffer);
+
+	// NOTE(ivan): Output to debugger's output window if any.
 	if (Win32State.IsDebuggerActive) {
 		OutputDebugStringA("## ");
-		OutputDebugStringA(Buffer);
+		OutputDebugStringA(FinalString);
 		OutputDebugStringA("\r\n");
+	}
+
+	// NOTE(ivan): Output to system console if any.
+	if (Win32State.Stdout) {
+		DWORD Unused;
+		WriteFile(Win32State.Stdout, FinalString, FinalStringLength, &Unused, 0);
 	}
 }
 
@@ -210,7 +222,8 @@ static PLATFORM_CRASHF(Win32Crashf) {
 		
 		char Buffer[2048] = {};
 		CollectArgsN(Buffer, ArraySize(Buffer) - 1, Format);
-		
+
+		Win32Outf("*** CRASH *** %s", Buffer);
 		MessageBoxA(0, Buffer, GAMENAME, MB_OK | MB_ICONERROR | MB_TOPMOST);
 	}
 	
@@ -235,7 +248,7 @@ Win32GetFreeFileIndex(void) {
 	LeaveTicketMutex(&Win32State.FilesMutex);
 
 	if (Index == NOTFOUND)
-		Win32Crashf("Out of file handles!");
+		Win32Crashf("Out of Win32-file-handles!");
 
 	return Index;
 }
@@ -892,7 +905,7 @@ Win32CalculateDesirableUsableMemorySize(void) {
 			if (!IsWow64Process(GetCurrentProcess(), &Is64BitWindows))
 				Is64BitWindows = FALSE;
 
-			// TODO(ivan): 64-bit Windows allows 32-bit programs to eat 3 gigabytes of RAM
+			// NOTE(ivan): 64-bit Windows allows 32-bit programs to eat 3 gigabytes of RAM
 			// instead of 2 gigabytes as in 32-bit Windows.
 			if (Is64BitWindows)        // NOTE(ivan): Requesting 3Gb of memory for 32-bit program
 				Result = Gigabytes(3); // requires it being built with /largeaddressaware MS linker option.
@@ -1127,6 +1140,30 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 		// NOTE(ivan): Check whether the program is already running.
 		HANDLE ExistsMutex = CreateMutexA(0, FALSE, GameExistsMutexName);
 		if (GetLastError() != ERROR_ALREADY_EXISTS) {
+			// NOTE(ivan): Create system console.
+			// As a GUI program, we do not normally get a console when we start.
+			// If we were run from the shell, we can attach to its console.
+			// If we already have a stdout handle, then we have been redirected
+			// and should just use that handle.
+			Win32State.Stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+			if (Win32State.Stdout) {
+				// NOTE(ivan): It seems that running from a shell always creates a stdout handle
+				// for us, even if it does not go anywhere (running from explorer.exe does not).
+				// If we can get file information for this handle, it's a file or pipe, so use it.
+				// Otherwise, pretend it wasn't there and find a console to use instead.
+				BY_HANDLE_FILE_INFORMATION StdoutInfo;
+				if (!GetFileInformationByHandle(Win32State.Stdout, &StdoutInfo))
+					Win32State.Stdout = 0;
+			}
+			if (!Win32State.Stdout) {
+				if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+					Win32State.Stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+
+					DWORD Unused;
+					WriteFile(Win32State.Stdout, "\r\n", 2, &Unused, 0);
+				}
+			}
+			
 			// NOTE(ivan): Set current working directory if necessary.
 			const char *ParamCwd = Win32CheckParamValue("-cwd");
 			if (ParamCwd)

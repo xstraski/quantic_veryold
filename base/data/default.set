@@ -1,0 +1,4 @@
+screen_resolution_x 800
+screen_resolution_y 600
+full_screen true
+v_sync false

@@ -162,9 +162,9 @@ struct command_cache {
 	ticket_mutex Mutex; // NOTE(ivan): For synchronization.
 };
 
-void RegisterCommand(command_cache *Cache, const char *Name, command_callback *Callback);
-void UnregisterCommand(command_cache *Cache, const char *Name);
-void ExecCommand(command_cache *Cache, const char *Command, ...);
+void RegisterCommand(const char *Name, command_callback *Callback);
+void UnregisterCommand(const char *Name);
+void ExecCommand(const char *Command, ...);
 
 // NOTE(ivan): Setting. A structure that links two strings that tells the name and value.
 // Mostly used for working with game configuration settings.
@@ -185,9 +185,9 @@ struct setting_cache {
 };
 
 // NOTE(ivan): Settings load, save, and access.
-b32 LoadSettingsFromFile(setting_cache *Cache, const char *FileName);
-b32 SaveSettingsToFile(setting_cache *Cache, const char *FileName);
-const char * GetSetting(setting_cache *Cache, const char *Name);
+b32 LoadSettingsFromFile(const char *FileName);
+b32 SaveSettingsToFile(const char *FileName);
+const char * GetSetting(const char *Name);
 
 // NOTE(ivan): Game globals.
 extern struct game_state {
@@ -202,13 +202,16 @@ extern struct game_state {
 	// NOTE(ivan): Game memory partitions.
 	memory_heap PerFrameHeap;    // NOTE(ivan): Contains temporary data for one frame, gets cleaned at each new frame.
 	memory_stack PermanentStack; // NOTE(ivan): Contains data that will stay online till the program complete shutdown.
-	memory_pool CommandsPool;    // NOTE(ivan): Special pool for commands registry.
+	memory_pool CommandsPool;    // NOTE(ivan): Special pool for commands cache.
 	memory_pool SettingsPool;    // NOTE(ivan): Special pool for settings cache.
 
 	// NOTE(ivan): Game primary commands and settings caches.
 	// NOTE(ivan): Should not be more than once instance of these structure that are meant to be singletons.
 	command_cache CommandCache;
 	setting_cache SettingCache;
+
+	// NOTE(ivan): Developer mode flag.
+	b32 IsDeveloperMode;
 } GameState;
 
 inline void

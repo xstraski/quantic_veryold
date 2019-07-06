@@ -398,7 +398,7 @@ struct cpu_info {
 };
 
 // NOTE(ivan): File handle.
-typedef s32 file_handle; // NOTE(ivan): In case of fail file_handle-returning functions returns NOTFOUND.
+typedef s32 file_handle; // NOTE(ivan): In case of fail file_handle-returning functions return NOTFOUND.
 
 // NOTE(ivan): File access type.
 enum file_access_type {
