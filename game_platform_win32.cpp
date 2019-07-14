@@ -267,8 +267,9 @@ Win32GetFile(s32 FileIndex) {
 inline void
 Win32FreeFileIndex(s32 FileIndex) {
 	EnterTicketMutex(&Win32State.FilesMutex);
-	
-	Win32GetFile(FileIndex)->IsOpened = false;
+
+	win32_file *File = &Win32State.Files[FileIndex];
+	File->IsOpened = false;
 	
 	LeaveTicketMutex(&Win32State.FilesMutex);
 }
@@ -1481,6 +1482,9 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 			// NOTE(ivan): Game is already running.
 			Win32Crashf(GAMENAME " instance is already running!");
 		}
+
+		if (IsSleepGranular)
+			timeEndPeriod(0);
 
 		CoUninitialize();
 	} else {

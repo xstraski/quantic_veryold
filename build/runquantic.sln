@@ -9,6 +9,7 @@ Project("{911E67C6-3D85-4FCE-B560-20A9C3E3FF48}") = "runquantic", "runquantic.ex
 		Executable = D:\XeusProjects\quantic\build\runquantic.exe
 		RemoteMachine = CHAIRTOP-PC
 		StartingDirectory = D:\XeusProjects\quantic\build
+		Arguments = -cwd ../base -devmode
 		Environment = По умолчанию
 		LaunchingEngine = 00000000-0000-0000-0000-000000000000
 		UseLegacyDebugEngines = No

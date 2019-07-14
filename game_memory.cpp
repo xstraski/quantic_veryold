@@ -33,7 +33,8 @@ CalculateGameMemorySizeByPercent(u32 SizePercentage) {
 	uptr Result;
 	
 	EnterTicketMutex(&GameState.GameMemory->Mutex);
-	Result = PercentageToSize(SizePercentage, GameState.GameMemory->StorageTotalSize);
+	Result = PercentageToSize(SizePercentage,
+							  GameState.GameMemory->StorageTotalSize);
 	LeaveTicketMutex(&GameState.GameMemory->Mutex);
 
 	return Result;
@@ -133,7 +134,7 @@ GetBlockByData(void *Data) {
 inline u8 *
 GetBlockData(memory_pool_block *Block) {
 	Assert(Block);
-	return (u8 *)(Block + sizeof(memory_pool_block));
+	return ((u8 *)Block + sizeof(memory_pool_block));
 }
 
 u32
@@ -148,9 +149,10 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePe
 	EnterTicketMutex(&Pool->Mutex);
 
 	uptr Size = CalculateGameMemorySizeByPercent(SizePercentage);
-	u32 BlocksInSize = (u32)(Size / BlockSize); uptr SizeWasted = Size % BlockSize;
-	u32 BlocksToAlloc = BlocksInSize + (SizeWasted ? 1 : 0);
-	uptr SizeToAlloc = (sizeof(memory_pool_block) + BlockSize) * BlocksToAlloc;
+	uptr FullBlockSize = sizeof(memory_pool_block) + BlockSize;
+	u32 BlocksInSize = (u32)(Size / FullBlockSize);
+	u32 BlocksToAlloc = BlocksInSize + ((Size % FullBlockSize) ? 1 : 0);
+	uptr SizeToAlloc = FullBlockSize * BlocksToAlloc;
 
 	Pool->Piece.Base = EatGameMemory(SizeToAlloc);
 	if (Pool->Piece.Base) {
@@ -161,7 +163,7 @@ CreateMemoryPool(memory_pool *Pool, const char *Name, uptr BlockSize, u32 SizePe
 		strncpy(Pool->Name, Name, ArraySize(Pool->Name) - 1);
 
 		Pool->AllocBlocks = 0;
-		Pool->FreeBlocks = GetBlockByIndex(Pool, 0);
+		Pool->FreeBlocks = (memory_pool_block *)Pool->Piece.Base;
 		for (u32 Index = 0; Index < Pool->MaxBlocks; Index++) {
 			memory_pool_block *NewBlock = GetBlockByIndex(Pool, Index);
 
@@ -220,16 +222,13 @@ AllocFromPool(memory_pool *Pool) {
 
 	memory_pool_block *TargetBlock = Pool->FreeBlocks;
 	if (TargetBlock) {
-		Result = GetBlockData(TargetBlock);
-
 		if (TargetBlock->PrevBlock)
 			TargetBlock->PrevBlock->NextBlock = TargetBlock->NextBlock;
 		if (TargetBlock->NextBlock)
 			TargetBlock->NextBlock->PrevBlock = TargetBlock->PrevBlock;
 		Pool->FreeBlocks = TargetBlock->NextBlock;
-		if (--Pool->NumFreeBlocks == 0)
-			Pool->FreeBlocks = 0;
-
+		Pool->NumFreeBlocks--;
+		
 		if (Pool->AllocBlocks)
 			Pool->AllocBlocks->PrevBlock = TargetBlock;
 		TargetBlock->NextBlock = Pool->AllocBlocks;
@@ -237,6 +236,7 @@ AllocFromPool(memory_pool *Pool) {
 		Pool->AllocBlocks = TargetBlock;
 		Pool->NumAllocBlocks++;
 
+		Result = GetBlockData(TargetBlock);
 		memset(Result, 0, Pool->BlockSize);
 	} else {
 		GameState.PlatformAPI->Outf("AllocFromPool[%s]: Out of memory!", Pool->Name);
@@ -257,13 +257,13 @@ FreeFromPool(memory_pool *Pool, void *Base) {
 	memory_pool_block *Block = GetBlockByData(Base);
 
 	if (Block->NextBlock)
-		Block->NextBlock->PrevBlock = Block->NextBlock;
+		Block->NextBlock->PrevBlock = Block->PrevBlock;
 	if (Block->PrevBlock)
-		Block->PrevBlock->NextBlock = Block->PrevBlock;
-	if (--Pool->NumAllocBlocks == 0)
-		Pool->AllocBlocks = 0;
+		Block->PrevBlock->NextBlock = Block->NextBlock;
+	Pool->NumAllocBlocks--;
 
-	Pool->FreeBlocks->PrevBlock = Block;
+	if (Pool->FreeBlocks)
+		Pool->FreeBlocks->PrevBlock = Block;
 	Block->NextBlock = Pool->AllocBlocks;
 	Block->PrevBlock = 0;
 	Pool->FreeBlocks = Block;

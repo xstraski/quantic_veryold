@@ -117,7 +117,7 @@ PushSetting(const char *Name, const char *Value) {
 		Cache->TopSetting = NewSetting;
 		Cache->NumSettings++;
 	} else {
-		GameState.PlatformAPI->Outf("PushSetting[%s][%s]: Out of memory!", Name, Value);
+		GameState.PlatformAPI->Outf("PushSetting[%s]: Out of memory!", Name);
 	}
 }
 
@@ -141,7 +141,6 @@ LoadSettingsFromFile(const char *FileName) {
 
 				FreeTokenizedString(&GameState.PerFrameHeap, Tokens, NumTokens);
 			}
-
 		}
 
 		Result = true;
@@ -263,7 +262,7 @@ OutMemoryHeapStats(memory_heap *Heap) {
 
 static void
 OutMemoryTableStats(void) {
-	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
+	GameState.PlatformAPI->Outf("-------------------------------------------------------------------------------");
 	
 	OutMemoryHeapStats(&GameState.PerFrameHeap);
 	OutMemoryStackStats(&GameState.PermanentStack);
@@ -271,16 +270,15 @@ OutMemoryTableStats(void) {
 	OutMemoryPoolStats(&GameState.CommandsPool);
 	OutMemoryPoolStats(&GameState.SettingsPool);
 	
-	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
+	GameState.PlatformAPI->Outf("-------------------------------------------------------------------------------");
 	const f64 Mb = (f64)(1024 * 1024);
 	EnterTicketMutex(&GameState.GameMemory->Mutex);
 	GameState.PlatformAPI->Outf("* Game primary storage total size: %.3f Mb.",
 								(f64)GameState.GameMemory->StorageTotalSize / Mb);
-	GameState.PlatformAPI->Outf("* Game primary stroage left space size: %.3f Mb",
+	GameState.PlatformAPI->Outf("* Game primary storage left space size: %.3f Mb",
 								(f64)GameState.GameMemory->FreeStorage.Size / Mb);
 	LeaveTicketMutex(&GameState.GameMemory->Mutex);
-	GameState.PlatformAPI->Outf("------------------------------------------------------------------------------------");
-	
+	GameState.PlatformAPI->Outf("-------------------------------------------------------------------------------");	
 }
 
 static b32
@@ -334,9 +332,9 @@ CommandOutRAM(char **Params, u32 NumParams) {
 
 extern "C" GAME_TRIGGER(GameTrigger) {
 	// NOTE(ivan): Various game file names.
-	static const char GameDefaultSettingsFileName[] = "default.set";
-	static const char GameUserSettingsFileName[] = "user.set";
-	static const char GameEdSettingsFileName[] = "ed.set";
+	static const char GameDefaultSettingsFileName[] = "data/default.set";
+	static const char GameUserSettingsFileName[] = "data/user.set";
+	static const char GameEdSettingsFileName[] = "data/ed.set";
 
 	switch (TriggerType) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -374,7 +372,8 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 											  sizeof(command), Percentage(10, FreeStoragePercent));
 		FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
 											  sizeof(setting), Percentage(10, FreeStoragePercent));
-		OutMemoryTableStats();
+		if (IsInternal())
+			OutMemoryTableStats();
 
 		// NOTE(ivan): Register base commands.
 		RegisterCommand("quit", CommandQuit);

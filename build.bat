@@ -15,7 +15,7 @@ rem General project name, must not contain spaces and deprecated symbols, no ext
 rem In a nutshell, the target game platform-specific executable will be named as run%OutputName%.exe,
 rem the game engine will be named as %OutputName%.dll,
 rem the target game entities will be named as %OutputName%_ents.dll.
-set OutputName=quantic
+set OutputName=%1
 
 rem -TC					  	   	   	- treat source files only as a pure C code, no C++ at all.
 rem -Oi					  			- enable intrinsics generation.
@@ -35,9 +35,9 @@ set CommonLinkerFlags=-subsystem:windows -opt:ref -incremental:no
 rem -machine:x86					- target CPU architecture is 32-bit X86.
 rem -machine:x64					- target CPU architecture is 64-bit AMD64.
 rem -largeaddressaware				- the 32-bit program can handle addresses larger than 2 gigabytes.
-if "%1"=="x86" set CPUSpecificLinkerFlags=-machine:x86 -largeaddressaware
-if "%1"=="x64" set CPUSpecificLinkerFlags=-machine:x64
-if [%1]==[] goto ErrorInvalidParameter
+if "%2"=="x86" set CPUSpecificLinkerFlags=-machine:x86 -largeaddressaware
+if "%2"=="x64" set CPUSpecificLinkerFlags=-machine:x64
+if [%2]==[] goto ErrorInvalidParameter
 
 rem -DINTERNAL=1					- [debug] signals we are compiling an internal build, not for public-release.
 rem -DINTERNAL=0					- signals we are compiling a public-release build.
@@ -45,9 +45,9 @@ rem -MDd							- [debug] use debug multithreaded DLL version of C runtime librar
 rem -MD								- use normal multithreaded DLL version of C runtime library.
 rem -Zi					  		  	- [debug] include debug info in a program database compatible with Edit&Continue.
 rem -Od								- [debug] disable optimization.
-if "%2"=="internal:on" set InternalBuildCompilerFlags=-DINTERNAL=1 -MDd -Zi -Od
-if "%2"=="internal:off" set InternalBuildCompilerFlags=-DINTERNAL=0 -MD
-if [%2]==[] goto ErrorInvalidParameter
+if "%3"=="internal:on" set InternalBuildCompilerFlags=-DINTERNAL=1 -MDd -Zi -Od
+if "%3"=="internal:off" set InternalBuildCompilerFlags=-DINTERNAL=0 -MD
+if [%3]==[] goto ErrorInvalidParameter
 
 rem -DSLOWCODE=1					- [debug] signals we are compiling a paranoid build with slow code enabled.
 rem -DSLOWCODE=0					- signals we are compiling a program without any slow code at all.
@@ -104,7 +104,9 @@ rem Usage information display.
 rem -----------------------------------
 :PrintUsage
 echo BUILD script for Windows target platform.
-echo BUILD ^<CPU-type^> ^<internal:on^|off^> ^<slowcode:on^|off^>
+echo BUILD ^<shared-name^> ^<CPU-type^> ^<internal:on^|off^> ^<slowcode:on^|off^>
+echo.
+echo shared-name      - game shared name, without spaces and special symbols.
 echo.
 echo CPU-type:
 echo * x86            - 32-bit X86-based processors.

@@ -33,7 +33,6 @@
 #    define IsTargetCPU32Bit() false
 #    define IsTargetCPU64Bit() true
 #endif
-
 #if INTERNAL
 #    define IsInternal() true
 #else
