@@ -86,8 +86,10 @@ typedef u32 b32;
 #define UnusedParam(Param) (Param)
 
 // NOTE(ivan): Collects multiple arguments into a single buffer.
-#define CollectArgs(Buffer, Format) do {va_list Args; va_start(Args, Format); vsprintf(Buffer, Format, Args); va_end(Args);} while(0)
-#define CollectArgsN(Buffer, BufferSize, Format) do {va_list Args; va_start(Args, Format); vsnprintf(Buffer, BufferSize, Format, Args); va_end(Args);} while(0)
+#define CollectArgs(Buffer, Format)										\
+	do {va_list Args; va_start(Args, Format); vsprintf(Buffer, Format, Args); va_end(Args);} while(0)
+#define CollectArgsN(Buffer, BufferSize, Format)						\
+	do {va_list Args; va_start(Args, Format); vsnprintf(Buffer, BufferSize, Format, Args); va_end(Args);} while(0)
 
 // NOTE(ivan): Calculates a given array's elements count.
 template <typename T, u32 N> inline constexpr u32

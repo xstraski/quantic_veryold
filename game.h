@@ -209,9 +209,6 @@ extern struct game_state {
 	// NOTE(ivan): Should not be more than once instance of these structure that are meant to be singletons.
 	command_cache CommandCache;
 	setting_cache SettingCache;
-
-	// NOTE(ivan): Developer mode flag.
-	b32 IsDeveloperMode;
 } GameState;
 
 inline void

@@ -332,7 +332,7 @@ static PLATFORM_FREAD(Win32FRead) {
 }
 
 static PLATFORM_FWRITE(Win32FWrite) {
-	UnusedParam(FileHandle);
+	Assert(FileHandle != NOTFOUND);
 	Assert(Buffer);
 	Assert(Size);
 

@@ -209,6 +209,65 @@ GetSetting(const char *Name) {
 
 inline void
 OutCPUStats(void) {
+	GameState.PlatformAPI->Outf("--------------------------------------------------------------------------");
+
+	GameState.PlatformAPI->Outf("CPU[%s]: \"%s\".",
+								GameState.PlatformAPI->CPUInfo.VendorName,
+								GameState.PlatformAPI->CPUInfo.BrandName);
+	GameState.PlatformAPI->Outf("CPU clock speed: %.2f GHz.",
+								GameState.PlatformAPI->CPUInfo.ClockSpeed);
+
+	char FeaturesList[4096] = {};
+	u32 FeaturesListLength = 0;
+	if (GameState.PlatformAPI->CPUInfo.SupportsMMX)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " MMX");
+	if (GameState.PlatformAPI->CPUInfo.SupportsMMXExt)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " MMXEXT");
+	if (GameState.PlatformAPI->CPUInfo.Supports3DNow)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " 3DNOW");
+	if (GameState.PlatformAPI->CPUInfo.Supports3DNowExt)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " 3DNOWEXT");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE2)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE2");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE3)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE3");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSSE3)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSSE3");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE4_1)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE4.1");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE4_2)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE4.2");
+	if (GameState.PlatformAPI->CPUInfo.SupportsSSE4A)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " SSE4A");
+	if (GameState.PlatformAPI->CPUInfo.SupportsHT)
+		FeaturesListLength += snprintf(FeaturesList + FeaturesListLength, ArraySize(FeaturesList) - FeaturesListLength - 1,
+									  " HT");
+	GameState.PlatformAPI->Outf("CPU features:%s.", FeaturesList);
+
+	GameState.PlatformAPI->Outf("CPU cores/threads: %d/%d.",
+								GameState.PlatformAPI->CPUInfo.NumCores,
+								GameState.PlatformAPI->CPUInfo.NumCoreThreads);
+	GameState.PlatformAPI->Outf("CPU caches L1/L2/L3: %d/%d/%d.",
+								GameState.PlatformAPI->CPUInfo.NumL1,
+								GameState.PlatformAPI->CPUInfo.NumL2,
+								GameState.PlatformAPI->CPUInfo.NumL3);
+	GameState.PlatformAPI->Outf("CPU NUMA-nodes: %d.",
+								GameState.PlatformAPI->CPUInfo.NumNUMA);
+	
+	GameState.PlatformAPI->Outf("--------------------------------------------------------------------------");
 }
 
 inline void
@@ -349,15 +408,8 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		GameState.GameClocks = GameClocks;
 		GameState.GameInput = GameInput;
 
-		// NOTE(ivan): Check whether we wants to enable developer mode.
-#if INTERNAL
-		GameState.IsDeveloperMode = true;
-#else		
-		if (GameState.PlatformAPI->CheckParam("-devmode") != NOTFOUND)
-			GameState.IsDeveloperMode = true;
-#endif		
-		if (GameState.IsDeveloperMode)
-			GameState.PlatformAPI->Outf("Running in developer mode.");
+		// NOTE(ivan): Output CPU information.
+		OutCPUStats();
 
 		// NOTE(ivan): Organize memory partitions.
 		// TODO(ivan): Calibrate memory partitions sizes to make them
