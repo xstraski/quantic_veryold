@@ -4,6 +4,7 @@
 #include "game_memory.h"
 #include "game_keys.h"
 #include "game_math.h"
+#include "game_renderer.h"
 
 // NOTE(ivan): Game title.
 // NOTE(ivan): Should be one single word with no spaces and special symbols.
@@ -193,6 +194,7 @@ const char * GetSetting(const char *Name);
 extern struct game_state {
 	// NOTE(ivan): Game APIs access.
 	platform_api *PlatformAPI;
+	renderer_api *RendererAPI;
 
 	// NOTE(ivan): Game data that gets exchanged between platform layer and game module each frame.
 	game_memory *GameMemory;
@@ -233,6 +235,7 @@ enum game_trigger_type {
 // NOTE(ivan): Beware that some of the parameters might be 0 depending on trigger type.
 #define GAME_TRIGGER(Name) void Name(game_trigger_type TriggerType, \
 									 platform_api *PlatformAPI,		\
+									 renderer_api *RendererAPI,		\
 									 game_memory *GameMemory,		\
 									 game_clocks *GameClocks,		\
 									 game_input *GameInput)

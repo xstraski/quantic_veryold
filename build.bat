@@ -95,6 +95,15 @@ popd
 if not %BuildResult%==0 goto ErrorBuildFailed
 
 rem -----------------------------------
+rem Build DX11 renderer.
+rem -----------------------------------
+pushd build
+cl -Fe%OutputName%_renderer_dx11.dll -Fm%OutputName%_renderer_dx11.map %CommonCompilerFlags% !InternalBuildCompilerFlags! !SlowCodeBuildCompilerFlags! ..\game_renderer_dx11.cpp /link %CommonLinkerFlags% !CPUSpecificLinkerFlags! -pdb:%OutputName%_renderer_dx11.pdb -dll -export:RendererGetAPI dxguid.lib dxgi.lib d3d11.lib
+set BuildResult=%errorlevel%
+popd
+if not %BuildResult%==0 goto ErrorBuildFailed
+
+rem -----------------------------------
 rem Build complete.
 rem -----------------------------------
 goto Eof

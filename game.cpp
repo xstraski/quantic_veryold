@@ -402,6 +402,7 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 	case GameTriggerType_Prepare: {
 		// NOTE(ivan): Set APIs.
 		GameState.PlatformAPI = PlatformAPI;
+		GameState.RendererAPI = RendererAPI;
 
 		// NOTE(ivan): Set platform-exchangable data.
 		GameState.GameMemory = GameMemory;
@@ -416,13 +417,13 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		// as adequate as possible.
 		GameState.PlatformAPI->Outf("Partitioning game primary storage...");
 		u32 FreeStoragePercent = 100;
-		FreeStoragePercent = CreateMemoryHeap(&GameState.PerFrameHeap, "PerFrameHeap",
+		FreeStoragePercent = CreateMemoryHeap(&GameState.PerFrameHeap, "per_frame_heap",
 											  Percentage(10, FreeStoragePercent));
-		FreeStoragePercent = CreateMemoryStack(&GameState.PermanentStack, "PermanentStack",
+		FreeStoragePercent = CreateMemoryStack(&GameState.PermanentStack, "permanent_stack",
 											   Percentage(10, FreeStoragePercent));
-		FreeStoragePercent = CreateMemoryPool(&GameState.CommandsPool, "CommandsPool",
+		FreeStoragePercent = CreateMemoryPool(&GameState.CommandsPool, "commands_pool",
 											  sizeof(command), Percentage(10, FreeStoragePercent));
-		FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "SettingsPool",
+		FreeStoragePercent = CreateMemoryPool(&GameState.SettingsPool, "settings_pool",
 											  sizeof(setting), Percentage(10, FreeStoragePercent));
 		if (IsInternal())
 			OutMemoryTableStats();
@@ -446,6 +447,10 @@ extern "C" GAME_TRIGGER(GameTrigger) {
 		////////////////////////////////////////////////////////////////////////////////////////////////////
 	case GameTriggerType_Release: {
 		GameState.PlatformAPI->Outf("Shutting down...");
+
+		// NOTE(ivan): Output memory stats.
+		if (IsInternal())
+			OutMemoryTableStats();
 		
 		// NOTE(ivan): Save settings.
 		SaveSettingsToFile(GameUserSettingsFileName);

@@ -481,6 +481,9 @@ struct platform_api {
 
 	// NOTE(ivan): CPU information.
 	cpu_info CPUInfo;
+
+	// NOTE(ivan): Is running on battery?
+	b32 IsOnBattery;
 };	
 
 #endif // #ifndef GAME_PLATFORM_H

@@ -1,4 +1,5 @@
 #include "game.h"
+#include "game_platform_win32.h"
 
 // Win32-specific CRT extensions.
 #include <crtdbg.h>
@@ -6,61 +7,7 @@
 // NOTE(ivan): Win32 visual styles enable.
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
-// NOTE(ivan): Win32 API versions definitions.
-#include <sdkddkver.h>
-#undef _WIN32_WINNT
-#undef _WIN32_IE
-#undef NTDDI_VERSION
-
-// NOTE(ivan): Win32 API target version is: Windows 7.
-#define _WIN32_WINNT _WIN32_WINNT_WIN7
-#define _WIN32_IE _WIN32_IE_WIN7
-#define NTDDI_VERSION NTDDI_VERSION_FROM_WIN32_WINNT(_WIN32_WINNT)
-
-// NOTE(ivan): Win32 API strict mode enable.
-#define STRICT
-
-// NOTE(ivan): Win32 API rarely-used routines exclusion.
-//
-// WIN32_LEAN_AND_MEAN:          keep the api header being a minimal set of mostly-required declarations and includes
-// OEMRESOURCE:                  exclude OEM resource values (dunno wtf is that, but never needed them...)
-// NOATOM:                       exclude atoms and their api (barely used today obsolete technique of pooling strings)
-// NODRAWTEXT:                   exclude DrawText() and DT_* definitions
-// NOMETAFILE:                   exclude METAFILEPICT (yet another windows weirdo we don't need)
-// NOMINMAX:                     exclude min() & max() macros (we have our own)
-// NOOPENFILE:                   exclude OpenFile(), OemToAnsi(), AnsiToOem(), and OF_* definitions (useless for us)
-// NOSCROLL:                     exclude SB_* definitions and scrolling routines
-// NOSERVICE:                    exclude Service Controller routines, SERVICE_* equates, etc...
-// NOSOUND:                      exclude sound driver routines (we'd rather use OpenAL or another thirdparty API)
-// NOTEXTMETRIC:                 exclude TEXTMETRIC and associated routines
-// NOWH:                         exclude SetWindowsHook() and WH_* defnitions
-// NOCOMM:                       exclude COMM driver routines
-// NOKANJI:                      exclude Kanji support stuff
-// NOHELP:                       exclude help engine interface
-// NOPROFILER:                   exclude profiler interface
-// NODEFERWINDOWPOS:             exclude DeferWindowPos() routines
-// NOMCX:                        exclude Modem Configuration Extensions (modems in 2019, really?)
-#define WIN32_LEAN_AND_MEAN
-#define OEMRESOURCE
-#define NOATOM
-#define NODRAWTEXT
-#define NOMETAFILE
-#define NOMINMAX
-#define NOOPENFILE
-#define NOSCROLL
-#define NOSERVICE
-#define NOSOUND
-#define NOTEXTMETRIC
-#define NOWH
-#define NOCOMM
-#define NOKANJI
-#define NOHELP
-#define NOPROFILER
-#define NODEFERWINDOWPOS
-#define NOMCX
-
-// NOTE(ivan): Win32 API includes.
-#include <windows.h>
+// NOTE(ivan): Win32 extra includes.
 #include <objbase.h>
 #include <commctrl.h>
 #include <versionhelpers.h>
@@ -92,6 +39,14 @@ struct win32_game_module {
 	HMODULE GameLibrary;
 
 	game_trigger *GameTrigger;
+};
+
+// NOTE(ivan): Win32-specific game renderer module structure.
+struct win32_renderer_module {
+	b32 IsValid; // NOTE(ivan): False if something went wrong and the game module is not loaded.
+	HMODULE RendererLibrary;
+
+	renderer_api *API;
 };
 
 // NOTE(ivan): Win32 files maximum count.
@@ -886,6 +841,28 @@ Win32LoadGameModule(const char *SharedName) {
 	return Result;
 }
 
+inline win32_renderer_module
+Win32LoadRendererModule(const char *SharedName, const char *APIName) {
+	Assert(APIName);
+
+	win32_renderer_module Result = {};
+
+	char RendererLibraryName[1024] = {};
+	snprintf(RendererLibraryName, ArraySize(RendererLibraryName) - 1, "%s_renderer_%s.dll", SharedName, APIName);
+
+	Win32Outf("Loading renderer module %s...", RendererLibraryName);
+	Result.RendererLibrary = LoadLibraryA(RendererLibraryName);
+	if (Result.RendererLibrary) {
+		renderer_get_api *RendererGetAPI = (renderer_get_api *)GetProcAddress(Result.RendererLibrary, "RendererGetAPI");
+		if (RendererGetAPI) {
+			Result.IsValid = true;
+			Result.API = RendererGetAPI();
+		}
+	}
+
+	return Result;
+}
+
 static uptr
 Win32CalculateDesirableUsableMemorySize(void) {
 	uptr Result;
@@ -1226,225 +1203,250 @@ WinMain(HINSTANCE Instance, HINSTANCE PrevInstance, LPSTR CommandLine, int ShowC
 						// NOTE(ivan): Connect to game module.
 						win32_game_module GameModule = Win32LoadGameModule(Win32API.SharedName);
 						if (GameModule.IsValid) {
-							GameModule.GameTrigger(GameTriggerType_Prepare,
+							// NOTE(ivan): Load appropriate renderer module.
+							win32_renderer_module RendererModule = Win32LoadRendererModule(Win32API.SharedName,
+																						   "dx11");
+							if (RendererModule.IsValid) {
+								renderer_init_platform_specific RendererPlatformSpecific = {};
+								RendererPlatformSpecific.TargetWindow = Window;
+
+								RendererModule.API->Init(&RendererPlatformSpecific);
+								
+								// NOTE(ivan): Prepare the game.
+								GameModule.GameTrigger(GameTriggerType_Prepare,
 												   &Win32API,
+												   RendererModule.API,
 												   &GameMemory,
 												   &GameClocks,
 												   &GameInput);
-
-							// NOTE(ivan): When all initialization is done, present the window.
-							ShowWindow(Window, ShowCommand);
-							SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
-
-							// NOTE(ivan): Prepare game clocks and timings.
-							u64 LastCPUClockCounter = __rdtsc();
-							u64 LastCycleCounter = Win32GetClock();
-
-							// NOTE(ivan): Primary loop.
-							b32 IsGameRunning = true;
-							while (IsGameRunning) {
-								// NOTE(ivan): Process OS messages.
-								static MSG Msg;
-								while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
-									if (Msg.message == WM_QUIT)
-										IsGameRunning = false;
-
-									TranslateMessage(&Msg);
-									DispatchMessageA(&Msg);
-								}
 								
-								// NOTE(ivan): Do these routines only in case the main window is in focus.
-								if (Win32State.IsWindowActive) {
-									// NOTE(ivan): Process Xbox controllers state.
-									static DWORD MaxXboxControllers = Min((u32)XUSER_MAX_COUNT,
-																		  ArraySize(GameInput.XboxControllers));
-									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
-										XINPUT_STATE XboxControllerState;
-										if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
-											XboxController->IsConnected = true;
+								// NOTE(ivan): When all initialization is done, present the window.
+								ShowWindow(Window, ShowCommand);
+								SetCursor(LoadCursorA(0, MAKEINTRESOURCEA(32512))); // NOTE(ivan): IDC_ARROW.
 
-											// TODO(ivan): See if XboxControllerState.dwPacketNumber
-											// increments too rapidly.
-											static DWORD PrevXboxPacketNumber = 0;
-											if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
-												PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
-												
-												// NOTE(ivan): Process buttons.
-												XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
+								// NOTE(ivan): Prepare game clocks and timings.
+								u64 LastCPUClockCounter = __rdtsc();
+								u64 LastCycleCounter = Win32GetClock();
 
-												Win32ProcessXInputDigitalButton(&XboxController->Start,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_START);
-												Win32ProcessXInputDigitalButton(&XboxController->Back,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_BACK);
+								// NOTE(ivan): Primary loop.
+								b32 IsGameRunning = true;
+								while (IsGameRunning) {
+									// NOTE(ivan): Process OS messages.
+									static MSG Msg;
+									while (PeekMessageA(&Msg, 0, 0, 0, PM_REMOVE)) {
+										if (Msg.message == WM_QUIT)
+											IsGameRunning = false;
 
-												Win32ProcessXInputDigitalButton(&XboxController->A,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_A);
-												Win32ProcessXInputDigitalButton(&XboxController->B,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_B);
-												Win32ProcessXInputDigitalButton(&XboxController->X,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_X);
-												Win32ProcessXInputDigitalButton(&XboxController->Y,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_Y);
-
-												Win32ProcessXInputDigitalButton(&XboxController->DPad.Up,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_DPAD_UP);
-												Win32ProcessXInputDigitalButton(&XboxController->DPad.Down,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_DPAD_DOWN);
-												Win32ProcessXInputDigitalButton(&XboxController->DPad.Left,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_DPAD_LEFT);
-												Win32ProcessXInputDigitalButton(&XboxController->DPad.Right,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_DPAD_RIGHT);
-
-												Win32ProcessXInputDigitalButton(&XboxController->LeftStick.Button,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_LEFT_THUMB);
-												Win32ProcessXInputDigitalButton(&XboxController->RightStick.Button,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_RIGHT_THUMB);
-
-												// NOTE(ivan): Process bumpers.
-												Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_LEFT_SHOULDER);
-												Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
-																				XboxGamepad->wButtons,
-																				XINPUT_GAMEPAD_RIGHT_SHOULDER);
-
-												// NOTE(ivan): Process triggers.
-												Win32SetInputButtonState(&XboxController->LeftTrigger.Button,
-																		 XboxGamepad->bLeftTrigger == 255);
-												Win32SetInputButtonState(&XboxController->RightTrigger.Button,
-																		 XboxGamepad->bRightTrigger == 255);
-												
-												XboxController->LeftTrigger.PullValue = XboxGamepad->bLeftTrigger;
-												XboxController->RightTrigger.PullValue = XboxGamepad->bRightTrigger;
-
-												// NOTE(ivan): Process sticks positions.
-												XboxController->LeftStick.Pos.X =
-													Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
-																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-												XboxController->LeftStick.Pos.Y =
-													Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
-																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-
-												XboxController->RightStick.Pos.X =
-													Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
-																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-												XboxController->RightStick.Pos.Y =
-													Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
-																				 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
-											}
-
-											// NOTE(ivan): Vibrate if requested (on previous frame).
-											if (XboxController->DoVibration.LeftMotorSpeed ||
-												XboxController->DoVibration.RightMotorSpeed) {
-												XINPUT_VIBRATION XboxControllerVibration;
-												XboxControllerVibration.wLeftMotorSpeed
-													= XboxController->DoVibration.LeftMotorSpeed;
-												XboxControllerVibration.wRightMotorSpeed
-													= XboxController->DoVibration.RightMotorSpeed;
-
-												XInputModule.SetState(Index, &XboxControllerVibration);
-
-												XboxController->DoVibration.LeftMotorSpeed = 0;
-												XboxController->DoVibration.RightMotorSpeed = 0;
-											}
-										} else {
-											XboxController->IsConnected = false;
-										}
+										TranslateMessage(&Msg);
+										DispatchMessageA(&Msg);
 									}
+								
+									// NOTE(ivan): Do these routines only in case the main window is in focus.
+									if (Win32State.IsWindowActive) {
+										// NOTE(ivan): Process Xbox controllers state.
+										static DWORD MaxXboxControllers = Min((u32)XUSER_MAX_COUNT,
+																			  ArraySize(GameInput.XboxControllers));
+										for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+											xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+											XINPUT_STATE XboxControllerState;
+											if (XInputModule.GetState(Index, &XboxControllerState) == ERROR_SUCCESS) {
+												XboxController->IsConnected = true;
+
+												// TODO(ivan): See if XboxControllerState.dwPacketNumber
+												// increments too rapidly.
+												static DWORD PrevXboxPacketNumber = 0;
+												if (PrevXboxPacketNumber < XboxControllerState.dwPacketNumber) {
+													PrevXboxPacketNumber = XboxControllerState.dwPacketNumber;
+												
+													// NOTE(ivan): Process buttons.
+													XINPUT_GAMEPAD *XboxGamepad = &XboxControllerState.Gamepad;
+
+													Win32ProcessXInputDigitalButton(&XboxController->Start,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_START);
+													Win32ProcessXInputDigitalButton(&XboxController->Back,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_BACK);
+
+													Win32ProcessXInputDigitalButton(&XboxController->A,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_A);
+													Win32ProcessXInputDigitalButton(&XboxController->B,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_B);
+													Win32ProcessXInputDigitalButton(&XboxController->X,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_X);
+													Win32ProcessXInputDigitalButton(&XboxController->Y,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_Y);
+
+													Win32ProcessXInputDigitalButton(&XboxController->DPad.Up,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_DPAD_UP);
+													Win32ProcessXInputDigitalButton(&XboxController->DPad.Down,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_DPAD_DOWN);
+													Win32ProcessXInputDigitalButton(&XboxController->DPad.Left,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_DPAD_LEFT);
+													Win32ProcessXInputDigitalButton(&XboxController->DPad.Right,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_DPAD_RIGHT);
+
+													Win32ProcessXInputDigitalButton(&XboxController->LeftStick.Button,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_LEFT_THUMB);
+													Win32ProcessXInputDigitalButton(&XboxController->RightStick.Button,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_RIGHT_THUMB);
+
+													// NOTE(ivan): Process bumpers.
+													Win32ProcessXInputDigitalButton(&XboxController->LeftBumper,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_LEFT_SHOULDER);
+													Win32ProcessXInputDigitalButton(&XboxController->RightBumper,
+																					XboxGamepad->wButtons,
+																					XINPUT_GAMEPAD_RIGHT_SHOULDER);
+
+													// NOTE(ivan): Process triggers.
+													Win32SetInputButtonState(&XboxController->LeftTrigger.Button,
+																			 XboxGamepad->bLeftTrigger == 255);
+													Win32SetInputButtonState(&XboxController->RightTrigger.Button,
+																			 XboxGamepad->bRightTrigger == 255);
+												
+													XboxController->LeftTrigger.PullValue = XboxGamepad->bLeftTrigger;
+													XboxController->RightTrigger.PullValue = XboxGamepad->bRightTrigger;
+
+													// NOTE(ivan): Process sticks positions.
+													XboxController->LeftStick.Pos.X =
+														Win32ProcessXInputStickValue(XboxGamepad->sThumbLX,
+																					 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+													XboxController->LeftStick.Pos.Y =
+														Win32ProcessXInputStickValue(XboxGamepad->sThumbLY,
+																					 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+
+													XboxController->RightStick.Pos.X =
+														Win32ProcessXInputStickValue(XboxGamepad->sThumbRX,
+																					 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+													XboxController->RightStick.Pos.Y =
+														Win32ProcessXInputStickValue(XboxGamepad->sThumbRY,
+																					 XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE);
+												}
+
+												// NOTE(ivan): Vibrate if requested (on previous frame).
+												if (XboxController->DoVibration.LeftMotorSpeed ||
+													XboxController->DoVibration.RightMotorSpeed) {
+													XINPUT_VIBRATION XboxControllerVibration;
+													XboxControllerVibration.wLeftMotorSpeed
+														= XboxController->DoVibration.LeftMotorSpeed;
+													XboxControllerVibration.wRightMotorSpeed
+														= XboxController->DoVibration.RightMotorSpeed;
+
+													XInputModule.SetState(Index, &XboxControllerVibration);
+
+													XboxController->DoVibration.LeftMotorSpeed = 0;
+													XboxController->DoVibration.RightMotorSpeed = 0;
+												}
+											} else {
+												XboxController->IsConnected = false;
+											}
+										}
 									
-									// NOTE(ivan): Process Win32-specific input events.
-									if (GameInput.KbButtons[KeyCode_F4].IsDown &&
-										(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
-										 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
-										IsGameRunning = false;
+										// NOTE(ivan): Process Win32-specific input events.
+										if (GameInput.KbButtons[KeyCode_F4].IsDown &&
+											(GameInput.KbButtons[KeyCode_LeftAlt].IsDown ||
+											 GameInput.KbButtons[KeyCode_RightAlt].IsDown))
+											IsGameRunning = false;
 
-									if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
-										Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
+										if (IsNewlyPressed(&GameInput.KbButtons[KeyCode_F2]))
+											Win32State.IsDebugCursor = !Win32State.IsDebugCursor;
 
-									// NOTE(ivan): Update game frame.
-									GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0);
+										// NOTE(ivan): Is running on battery?
+										SYSTEM_POWER_STATUS PowerStatus;
+										GetSystemPowerStatus(&PowerStatus);
 
-									// NOTE(ivan): Before the next frame, make all input events obsolete.
-									for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
-										GameInput.KbButtons[Index].IsNew = false;
+										Win32API.IsOnBattery = (PowerStatus.BatteryFlag != 128);
 
-									for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
-										GameInput.MouseButtons[Index].IsNew = false;
+										// NOTE(ivan): Update game frame.
+										GameModule.GameTrigger(GameTriggerType_Frame, 0, 0, 0, 0, 0);
 
-									for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
-										xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
+										// NOTE(ivan): Before the next frame, make all input events obsolete.
+										for (u32 Index = 0; Index < ArraySize(GameInput.KbButtons); Index++)
+											GameInput.KbButtons[Index].IsNew = false;
 
-										XboxController->Start.IsNew = false;
-										XboxController->Back.IsNew = false;
+										for (u32 Index = 0; Index < ArraySize(GameInput.MouseButtons); Index++)
+											GameInput.MouseButtons[Index].IsNew = false;
 
-										XboxController->A.IsNew = false;
-										XboxController->B.IsNew = false;
-										XboxController->X.IsNew = false;
-										XboxController->Y.IsNew = false;
+										for (u32 Index = 0; Index < MaxXboxControllers; Index++) {
+											xbox_controller_state *XboxController = &GameInput.XboxControllers[Index];
 
-										XboxController->DPad.Up.IsNew = false;
-										XboxController->DPad.Down.IsNew = false;
-										XboxController->DPad.Left.IsNew = false;
-										XboxController->DPad.Right.IsNew = false;
+											XboxController->Start.IsNew = false;
+											XboxController->Back.IsNew = false;
 
-										XboxController->LeftBumper.IsNew = false;
-										XboxController->RightBumper.IsNew = false;
+											XboxController->A.IsNew = false;
+											XboxController->B.IsNew = false;
+											XboxController->X.IsNew = false;
+											XboxController->Y.IsNew = false;
 
-										XboxController->LeftStick.Button.IsNew = false;
-										XboxController->RightStick.Button.IsNew = false;
-									}
+											XboxController->DPad.Up.IsNew = false;
+											XboxController->DPad.Down.IsNew = false;
+											XboxController->DPad.Left.IsNew = false;
+											XboxController->DPad.Right.IsNew = false;
 
-									// NOTE(ivan): Escape primary loop if quit has been requested.
-									IsGameRunning = !Win32API.QuitRequested;
+											XboxController->LeftBumper.IsNew = false;
+											XboxController->RightBumper.IsNew = false;
 
-									// NOTE(ivan): Finalize timings and synchronize framerate.
-									u64 EndCycleCounter = Win32GetClock();
-									f32 CycleSecondsElapsed =
-										Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
-										
-									if (CycleSecondsElapsed < GameTargetFramerate) {
-										while (CycleSecondsElapsed < GameTargetFramerate) {
-											if (IsSleepGranular) {
-												DWORD SleepMS
-													= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
-												if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
-													Sleep(SleepMS);
-											}
-
-											CycleSecondsElapsed
-												= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+											XboxController->LeftStick.Button.IsNew = false;
+											XboxController->RightStick.Button.IsNew = false;
 										}
+
+										// NOTE(ivan): Escape primary loop if quit has been requested.
+										IsGameRunning = !Win32API.QuitRequested;
+
+										// NOTE(ivan): Finalize timings and synchronize framerate.
+										u64 EndCycleCounter = Win32GetClock();
+										f32 CycleSecondsElapsed =
+											Win32GetSecondsElapsed(LastCycleCounter, EndCycleCounter);
+										
+										if (CycleSecondsElapsed < GameTargetFramerate) {
+											while (CycleSecondsElapsed < GameTargetFramerate) {
+												if (IsSleepGranular) {
+													DWORD SleepMS
+														= (DWORD)((GameTargetFramerate - CycleSecondsElapsed) * 1000);
+													if (SleepMS) // NOTE(ivan): Wa don't want to call Sleep(0).
+														Sleep(SleepMS);
+												}
+
+												CycleSecondsElapsed
+													= Win32GetSecondsElapsed(LastCycleCounter, Win32GetClock());
+											}
+										}
+										GameClocks.SecondsPerFrame = CycleSecondsElapsed;
+
+										u64 EndCPUClockCounter = __rdtsc();
+										GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
+
+										EndCycleCounter = Win32GetClock();
+										GameClocks.FramesPerSecond =
+											(f32)((f64)Win32State.PerformanceFrequency
+												  / (EndCycleCounter - LastCycleCounter));
+
+										LastCPUClockCounter = __rdtsc();
+										LastCycleCounter = EndCycleCounter;
 									}
-									GameClocks.SecondsPerFrame = CycleSecondsElapsed;
-
-									u64 EndCPUClockCounter = __rdtsc();
-									GameClocks.CPUClocksPerFrame = EndCPUClockCounter - LastCPUClockCounter;
-
-									EndCycleCounter = Win32GetClock();
-									GameClocks.FramesPerSecond =
-										(f32)((f64)Win32State.PerformanceFrequency
-											  / (EndCycleCounter - LastCycleCounter));
-
-									LastCPUClockCounter = __rdtsc();
-									LastCycleCounter = EndCycleCounter;
 								}
+
+								// NOTE(ivan): Release renderer.
+								RendererModule.API->Shutdown();
+								FreeLibrary(RendererModule.RendererLibrary);
+							} else {
+								// NOTE(ivan): Renderer module cannot be loaded.
+								Win32Crashf(GAMENAME " cannot load renderer DLL!");
 							}
 
 							// NOTE(ivan): Release game and its module.
-							GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0);
+							GameModule.GameTrigger(GameTriggerType_Release, 0, 0, 0, 0, 0);
 							FreeLibrary(GameModule.GameLibrary);
 						} else {
 							// NOTE(ivan): Game module cannot be loaded.
